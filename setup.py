@@ -9,11 +9,11 @@ setuptools.setup(
     name="parallelagram",
     version="0.0.1",
 
-    description="A sample CDK Python app",
+    description="A Python library providing tools for distributing parallelizable workloads across AWS compute services",
     long_description=long_description,
     long_description_content_type="text/markdown",
 
-    author="author",
+    author="zyd14",
 
     package_dir={"": "parallelagram"},
     packages=setuptools.find_packages(where="parallelagram"),
