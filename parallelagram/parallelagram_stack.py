@@ -22,3 +22,4 @@ class ParallelagramStack(core.Stack):
         )
 
         topic.add_subscription(subs.SqsSubscription(queue))
+
