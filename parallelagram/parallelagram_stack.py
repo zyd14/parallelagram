@@ -16,22 +16,12 @@ from parallelagram.config_parser import read_config
 class LambdaStack(core.Stack):
 
     def __init__(self,
-                 app: core.App,
+                 scope: core.Stack,
                  id: str,
-                 code_path: str,
-                 function_id: str,
-                 handler: str,
-                 timeout: int,
                  **kwargs):
-        super().__init__(app, id)
+        super().__init__(scope, id)
 
-        lambda_fn = lambda_.Function(
-            self, function_id,
-            code=self.load_code(code_path),
-            handler=handler,
-            timeout=core.Duration.seconds(timeout),
-            runtime=lambda_.Runtime.PYTHON_3_8
-        )
+        self.make_lambda_stack()
 
     def load_code(self, code_path: str):
         if code_path.startswith('s3://'):
@@ -46,24 +36,16 @@ class LambdaStack(core.Stack):
                 handler_code = code_in.read()
         return handler_code
 
-
-class LambdaFactory:
-
-    @classmethod
-    def make_lambda_stack(cls):
-        config = read_config('../parallel-config.json')
+    def make_lambda_stack(self):
+        config = read_config('parallel-config.json')
 
         lambda_list = []
         for l in config.lambdas:
-            lambda_list.append(LambdaStack(app,
-                                           id=config.app_name,
-                                           code_path=l.code_path,
-                                           function_id=l.lambda_name,
-                                           handler=l.lambda_handler,
-                                           timeout=l.timeout))
+            lambda_.Function(
+                self, l.lambda_name,
+                code=lambda_.Code.asset(l.code_path),
+                handler=l.lambda_handler,
+                timeout=core.Duration.seconds(l.timeout),
+                runtime=lambda_.Runtime.PYTHON_3_8
+            )
         return lambda_list
-
-
-app = core.App()
-lambda_list = LambdaFactory.make_lambda_stack()
-app.synth()

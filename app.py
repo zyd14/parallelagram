@@ -2,10 +2,10 @@
 
 from aws_cdk import core
 
-from parallelagram.parallelagram_stack import ParallelagramStack
+from parallelagram.parallelagram_stack import LambdaStack
 
 
 app = core.App()
-ParallelagramStack(app, "parallelagram", env={'region': 'us-west-2'})
+LambdaStack(app, "parallelagram", env={'region': 'us-west-2'})
 
 app.synth()
