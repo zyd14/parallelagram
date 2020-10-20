@@ -1,8 +1,11 @@
 {
+  "app_name": "test-app",
   "lambdas": [
       {
         "code_path": "example_handler.py",
         "lambda_name": "example-lambda",
+        "lambda_handler": "handler",
+        "timeout": 900,
         "s3_request_bucket": "sg-phil-testing",
         "s3_response_bucket": "sg-phil-testing",
         "dynamo_response_table": "phils_done_tasks"

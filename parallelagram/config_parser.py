@@ -9,6 +9,8 @@ from marshmallow import Schema, fields, post_load, ValidationError
 class RemoteLambda:
     code_path = attr.ib()  # type: str
     lambda_name = attr.ib()  # type: str
+    lambda_handler = attr.ib()  # type: str
+    timeout = attr.ib()  # type: int
     s3_request_bucket = attr.ib()  # type: str
     s3_response_bucket = attr.ib()  # type: str
     dynamo_response_table = attr.ib()  # type: str
@@ -17,11 +19,14 @@ class RemoteLambda:
 @attr.s
 class ParallelagramConfig:
     lambdas = attr.ib()  # type: List[RemoteLambda]
+    app_name = attr.ib()  # type: str
 
 
-class RemoteLambdaConfig(Schema):
+class RemoteLambdaSchema(Schema):
     code_path = fields.Str(required=True)
     lambda_name = fields.Str(required=True)
+    lambda_handler = fields.Str(required=True)
+    timeout = fields.Int(required=False, default=900, missing=900)
     s3_request_bucket = fields.Str(required=True)
     s3_response_bucket = fields.Str(required=True)
     dynamo_response_table = fields.Str(required=True)
@@ -32,7 +37,8 @@ class RemoteLambdaConfig(Schema):
 
 
 class ParallelagramConfigSchema(Schema):
-    lambdas = fields.List(fields.Nested(RemoteLambdaConfig))
+    lambdas = fields.List(fields.Nested(RemoteLambdaSchema))
+    app_name = fields.Str(required=True)
 
     @post_load()
     def loader(self, data, **kwargs):
