@@ -16,6 +16,9 @@ class RemoteLambda:
     dynamo_response_table = attr.ib()  # type: str
     response_table_read_capacity = attr.ib()  # type: int
     response_table_write_capacity = attr.ib()  # type: int
+    iam_role = attr.ib()  # type: str
+    iam_policy = attr.ib()  # type: str
+
 
 @attr.s
 class ParallelagramConfig:
@@ -39,7 +42,12 @@ class RemoteLambdaSchema(Schema):
     response_table_write_capacity = fields.Int(required=False,
                                                default=5,
                                                missing=5)
-
+    iam_role = fields.Str(required=False,
+                          default='ParallelagramExecutionRole',
+                          missing='ParallelagramExecutionRole')
+    iam_policy = fields.Str(required=False,
+                            default='',
+                            missing='')
     @post_load()
     def loader(self, data, **kwargs):
         return RemoteLambda(**data)

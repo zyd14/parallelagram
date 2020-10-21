@@ -8,7 +8,9 @@
         "timeout": 900,
         "s3_request_bucket": "sg-phil-testing",
         "s3_response_bucket": "sg-phil-testing",
-        "dynamo_response_table": "phils_done_tasks"
+        "dynamo_response_table": "phils_done_tasks",
+        "iam_role": "aCustomRole",
+        "iam_policy": "aCustomPolicy"
       },
     {
         "code_path": "example_lambda",
