@@ -3,8 +3,10 @@ from uuid import uuid4
 
 import pytest
 
-from parallelagram.remote_manager import prep_s3_object, check_for_errors, TaskMap, Lambdable, run_lambdable_task, \
+from parallelagram.remote_manager import prep_s3_object, check_for_errors, run_lambdable_task, \
     launch_remote_tasks, try_getting_responses
+from launchables import TaskMap
+from parallelagram import Lambdable
 
 
 class MockAsyncResponse:
