@@ -22,7 +22,6 @@ class LambdaStack(core.Stack):
         config = read_config('parallel-config.json')
         self.make_lambda_stack(config)
 
-
     def load_code(self, code_path: str):
         if code_path.startswith('s3://'):
             s3 = boto3.client('s3')
@@ -39,22 +38,24 @@ class LambdaStack(core.Stack):
     def make_lambda_stack(self, config: ParallelagramConfig) -> List[Type[core.Stack]]:
 
         lambda_list = []
-        existing_tables = set()
+        existing_tables = {}
         for i, l in enumerate(config.lambdas):
             table_name = f'table_{i}'
             if table_name not in existing_tables:
-                existing_tables.add(table_name)
                 table = dynamodb.Table(self, table_name,
                                        partition_key=dynamodb.Attribute(name='response_id',
                                                                         type=dynamodb.AttributeType.STRING),
                                        read_capacity=l.response_table_read_capacity,
                                        write_capacity=l.response_table_write_capacity,
                                        time_to_live_attribute='ttl')
-            lambda_.Function(
-                self, l.lambda_name,
-                code=lambda_.Code.asset(l.code_path),
-                handler=l.lambda_handler,
-                timeout=core.Duration.seconds(l.timeout),
-                runtime=lambda_.Runtime.PYTHON_3_8
-            )
+                existing_tables.update({table_name: table})
+
+            fn = lambda_.Function(self, l.lambda_name,
+                                  code=lambda_.Code.asset(l.code_path),
+                                  handler=l.lambda_handler,
+                                  timeout=core.Duration.seconds(l.timeout),
+                                  runtime=lambda_.Runtime.PYTHON_3_8
+                                )
+            existing_tables.get(table_name).grant_read_write_data(fn)
+
         return lambda_list
