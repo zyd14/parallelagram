@@ -54,8 +54,33 @@ class LambdaStack(core.Stack):
                                   code=lambda_.Code.asset(l.code_path),
                                   handler=l.lambda_handler,
                                   timeout=core.Duration.seconds(l.timeout),
-                                  runtime=lambda_.Runtime.PYTHON_3_8
+                                  memory_size=l.memory_size,
+                                  runtime=self.get_runtime(l.runtime),
+                                  tracing=self.get_trace_value(l.tracing)
                                 )
             existing_tables.get(table_name).grant_read_write_data(fn)
 
         return lambda_list
+
+    def get_trace_value(self, config_trace: bool) -> lambda_.Tracing:
+        if config_trace:
+            tracing_value = lambda_.Tracing.ACTIVE
+        else:
+            tracing_value = lambda_.Tracing.DISABLED
+        return tracing_value
+
+    def get_runtime(self, config_runtime: str) -> lambda_.Runtime:
+        runtimes = {'python3.8': lambda_.Runtime.PYTHON_3_8,
+                    'python3.7': lambda_.Runtime.PYTHON_3_7,
+                    'python3.6': lambda_.Runtime.PYTHON_3_6,
+                    'python2.7': lambda_.Runtime.PYTHON_2_7,
+                    'node12.x': lambda_.Runtime.NODEJS_12_X,
+                    'node10.x': lambda_.Runtime.NODEJS_10_X,
+                    'java11': lambda_.Runtime.JAVA_11,
+                    'java8': lambda_.Runtime.JAVA_8,
+                    'java8_corretto': lambda_.Runtime.JAVA_8_CORRETTO}
+        try:
+            return runtimes[config_runtime]
+        except KeyError as ke:
+            print(f'No lambda runtime exists for configured value {ke.args[0]}.'
+                  f'Valid configurable runtimes: {[runtimes.keys()]}')

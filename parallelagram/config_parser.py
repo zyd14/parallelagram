@@ -6,11 +6,12 @@ from marshmallow import Schema, fields, post_load, ValidationError
 
 
 @attr.s
-class RemoteLambda:
+class RemoteLambdaConfig:
     code_path = attr.ib()  # type: str
     lambda_name = attr.ib()  # type: str
     lambda_handler = attr.ib()  # type: str
     timeout = attr.ib()  # type: int
+    memory_size = attr.ib()  # type: int
     s3_request_bucket = attr.ib()  # type: str
     s3_response_bucket = attr.ib()  # type: str
     dynamo_response_table = attr.ib()  # type: str
@@ -18,11 +19,13 @@ class RemoteLambda:
     response_table_write_capacity = attr.ib()  # type: int
     iam_role = attr.ib()  # type: str
     iam_policy = attr.ib()  # type: str
+    tracing = attr.ib()  # type: bool
+    runtime = attr.ib()  # type: str
 
 
 @attr.s
 class ParallelagramConfig:
-    lambdas = attr.ib()  # type: List[RemoteLambda]
+    lambdas = attr.ib()  # type: List[RemoteLambdaConfig]
     app_name = attr.ib()  # type: str
 
 
@@ -31,6 +34,7 @@ class RemoteLambdaSchema(Schema):
     lambda_name = fields.Str(required=True)
     lambda_handler = fields.Str(required=True)
     timeout = fields.Int(required=False, default=900, missing=900)
+    memory_size = fields.Int(required=False, default=256, missing=256)
     s3_request_bucket = fields.Str(required=True)
     s3_response_bucket = fields.Str(required=True)
     dynamo_response_table = fields.Str(required=False,
@@ -48,9 +52,14 @@ class RemoteLambdaSchema(Schema):
     iam_policy = fields.Str(required=False,
                             default='',
                             missing='')
+    tracing = fields.Bool(required=False,
+                          default=False,
+                          missing=False)
+    runtime = fields.Str(required=True)
+
     @post_load()
     def loader(self, data, **kwargs):
-        return RemoteLambda(**data)
+        return RemoteLambdaConfig(**data)
 
 
 class ParallelagramConfigSchema(Schema):

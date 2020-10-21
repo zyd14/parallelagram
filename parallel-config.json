@@ -6,11 +6,13 @@
         "lambda_name": "example-lambda",
         "lambda_handler": "handler",
         "timeout": 900,
+        "memory_size": 512,
         "s3_request_bucket": "sg-phil-testing",
         "s3_response_bucket": "sg-phil-testing",
         "dynamo_response_table": "phils_done_tasks",
         "iam_role": "aCustomRole",
-        "iam_policy": "aCustomPolicy"
+        "iam_policy": "aCustomPolicy",
+        "tracing": true
       },
     {
         "code_path": "example_lambda",
