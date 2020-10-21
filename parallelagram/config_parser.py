@@ -14,7 +14,8 @@ class RemoteLambda:
     s3_request_bucket = attr.ib()  # type: str
     s3_response_bucket = attr.ib()  # type: str
     dynamo_response_table = attr.ib()  # type: str
-
+    response_table_read_capacity = attr.ib()  # type: int
+    response_table_write_capacity = attr.ib()  # type: int
 
 @attr.s
 class ParallelagramConfig:
@@ -29,7 +30,15 @@ class RemoteLambdaSchema(Schema):
     timeout = fields.Int(required=False, default=900, missing=900)
     s3_request_bucket = fields.Str(required=True)
     s3_response_bucket = fields.Str(required=True)
-    dynamo_response_table = fields.Str(required=True)
+    dynamo_response_table = fields.Str(required=False,
+                                       default='parallelagram_responses',
+                                       missing='parallelagram_responses')
+    response_table_read_capacity = fields.Int(required=False,
+                                              default=5,
+                                              missing=5)
+    response_table_write_capacity = fields.Int(required=False,
+                                               default=5,
+                                               missing=5)
 
     @post_load()
     def loader(self, data, **kwargs):
