@@ -119,7 +119,7 @@ import logging
 import os
 from functools import wraps, update_wrapper
 from time import sleep
-from typing import List, Union
+from typing import Callable, List, Tuple, Union
 import uuid
 
 import boto3
@@ -131,6 +131,7 @@ from parallelagram.zappa_async_fork import get_async_response, task, get_func_ta
 
 s3_client = boto3.client('s3', region_name='us-west-2')
 ecs_client = boto3.client('ecs', region_name='us-west-2')
+
 
 def create_logger() -> logging.Logger:
     logger = logging.getLogger()
@@ -178,6 +179,9 @@ def manage(task_map: Union[TaskMap, List[Lambdable]]) -> Union[List[str], None]:
         Args:
             task_map: a TaskMap object holding tasks to be executed asynchronously
 
+        Returns:
+            list of response_ids identifying DynamoDB items to which remote lambda invocations will write the results of
+            their execution.
     """
 
     if len(task_map) < 1:
@@ -229,6 +233,9 @@ def manage(task_map: Union[TaskMap, List[Lambdable]]) -> Union[List[str], None]:
 
 
 def run_lambdable_task(lambdable: Lambdable):
+    """ Invoke a remote lambda function specified by the Lambdable object, returning the response_id attribute of a
+        DynamoDB item to which the remote lambda function will write its return value to.
+    """
     if not isinstance(lambdable, Lambdable):
         raise Exception("Can't execute non-Lambdable tasks in lists yet")
 
@@ -286,7 +293,7 @@ def check_for_errors(response_datas: List[dict]):
     return errors
 
 
-def profit(response_ids: List[str], total_wait: int, max_total_wait: int, num_tasks: int):
+def profit(response_ids: List[str], total_wait: int, max_total_wait: int, num_tasks: int) -> list:
     """ Attempt to collect responses from tasks using response IDs returned when launching async lambda functions.
 
     Args:
@@ -298,7 +305,7 @@ def profit(response_ids: List[str], total_wait: int, max_total_wait: int, num_ta
         num_tasks: Number of tasks being executed
 
     Returns:
-
+        list of values returned by remote lambda invocations, usually represented as dictionaries
     """
     loop_wait = int(os.getenv('LOOP_WAIT_SECONDS', 15))
 
@@ -332,7 +339,7 @@ def profit(response_ids: List[str], total_wait: int, max_total_wait: int, num_ta
 
 def try_getting_responses(response_ids: List[str],
                           response_datas: List[dict],
-                          num_responses_collected: int):
+                          num_responses_collected: int) -> Tuple[List[dict], List[str], int]:
     """ Iterate over task response_ids, using each ID to look up an item in DynamoDB which will store the result of an
         individual lambda task when it has completed. If a response is found for a task, remove its ID from the list so
         it is not checked for again.
@@ -377,7 +384,7 @@ def remove_collected_ids(response_ids_collected: List[str], response_ids: List[s
             pass
 
 
-def get_s3_response(response: dict):
+def get_s3_response(response: dict) -> dict:
     """ Retrieve response from worker Lambda which stored its response in S3"""
     s3_bucket = response.get('s3_bucket')
     s3_key = response.get('s3_key')
@@ -386,7 +393,7 @@ def get_s3_response(response: dict):
     return json.loads(s3.get_object(Bucket=s3_bucket, Key=s3_key)['Body'].read().decode('utf-8'))
 
 
-def remote_runner(*args, **kwargs):
+def remote_runner(*args, **kwargs) -> Callable:
     func = args[0]
     remote_aws_lambda_function_name = kwargs.pop('remote_aws_lambda_function_name', 'remote-phil-dev')
     remote_aws_region = kwargs.pop('remote_aws_region', 'us-west-2')
