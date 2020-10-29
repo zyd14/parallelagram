@@ -124,29 +124,19 @@ import uuid
 
 import boto3
 
-from launchables import TaskMap
-from parallelagram import Lambdable
-
+from parallelagram.utils import LOGGER
+from parallelagram.launchables import TaskMap, Lambdable
 from parallelagram.zappa_async_fork import get_async_response, task, get_func_task_path, run
 
 s3_client = boto3.client('s3', region_name='us-west-2')
 ecs_client = boto3.client('ecs', region_name='us-west-2')
 
 
-def create_logger() -> logging.Logger:
-    logger = logging.getLogger()
-    logger.setLevel('INFO')
-    sh = logging.StreamHandler()
-    sh.setLevel('INFO')
-    logger.addHandler(sh)
-    return logger
-
-
-LOGGER = create_logger()
 REQUEST_S3_BUCKET = os.getenv('REQUEST_S3_BUCKET', 'sg-phil-testing')
 
 
 def launch_remote_tasks(tasks: Union[TaskMap, List[Lambdable]]) -> List[str]:
+    import launchables
     response_ids = []
     if isinstance(tasks, list):
         for lambdable in tasks:
@@ -157,7 +147,7 @@ def launch_remote_tasks(tasks: Union[TaskMap, List[Lambdable]]) -> List[str]:
                 # didn't care about getting a response from this lambdable, don't add it to the list of responses to
                 # check in on
                 run_lambdable_task(lambdable)
-    elif isinstance(tasks, TaskMap):
+    elif isinstance(tasks, launchables.TaskMap):
         # Execute tasks in task map - TaskMap objects are supported to enable use with zappa-deployed functions
         for t, args in tasks:
             # When task is executed the @task wrapper provided by zappa returns an object which provides a DynamoDB
@@ -232,11 +222,12 @@ def manage(task_map: Union[TaskMap, List[Lambdable]]) -> Union[List[str], None]:
         LOGGER.warning('No tasks created')
 
 
-def run_lambdable_task(lambdable: Lambdable):
+def run_lambdable_task(lambdable: Lambdable) -> str:
     """ Invoke a remote lambda function specified by the Lambdable object, returning the response_id attribute of a
         DynamoDB item to which the remote lambda function will write its return value to.
     """
-    if not isinstance(lambdable, Lambdable):
+    import launchables
+    if not isinstance(lambdable, launchables.Lambdable):
         raise Exception("Can't execute non-Lambdable tasks in lists yet")
 
     # Generate response ID so that DynamoDB item should have same ID should be the same string as the S3 key

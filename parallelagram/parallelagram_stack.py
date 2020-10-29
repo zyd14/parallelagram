@@ -1,3 +1,8 @@
+import os
+
+project_dir = os.path.dirname(os.path.realpath(os.path.dirname(__file__)))
+config_path = os.path.join(project_dir, 'parallel-config.json')
+
 from typing import List, Type
 
 from aws_cdk import (
@@ -19,7 +24,7 @@ class LambdaStack(core.Stack):
                  **kwargs):
         super().__init__(scope, id)
 
-        config = read_config('parallel-config.json')
+        config = read_config(config_path)
         self.make_lambda_stack(config)
 
     def load_code(self, code_path: str):

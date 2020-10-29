@@ -2,23 +2,25 @@
   "app_name": "test-app",
   "lambdas": [
       {
-        "code_path": "example_lambda",
+        "code_path": "/Users/zromer/Documents/programming/parallelagram/example_lambda",
         "lambda_name": "example-lambda",
         "lambda_handler": "handler",
-        "timeout": 900,
+        "timeout": 20,
         "memory_size": 512,
         "s3_request_bucket": "sg-phil-testing",
         "s3_response_bucket": "sg-phil-testing",
         "dynamo_response_table": "phils_done_tasks",
-        "iam_role": "aCustomRole",
-        "iam_policy": "aCustomPolicy",
+        "iam_role": "LambdaCustomRole",
+        "iam_policy": "LambdaCustomRole",
+        "runtime": "python3.8",
         "tracing": true
       },
     {
-        "code_path": "example_lambda",
+        "code_path": "/Users/zromer/Documents/programming/parallelagram/example_lambda",
         "lambda_name": "example-lambda2",
         "lambda_handler": "handler",
-        "timeout": 900,
+        "timeout": 20,
+        "runtime": "python3.8",
         "s3_request_bucket": "sg-phil-testing",
         "s3_response_bucket": "sg-phil-testing",
         "dynamo_response_table": "phils_done_tasks"

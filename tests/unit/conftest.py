@@ -1,8 +1,11 @@
 import pytest
 
 good_config = {
+              "app_name": "testarino",
               "lambdas": [
                   {
+                    "lambda_handler": "test_handler",
+                    "runtime": "python3.8",
                     "code_path": "example_handler.py",
                     "lambda_name": "example-lambda",
                     "s3_request_bucket": "sg-phil-testing",

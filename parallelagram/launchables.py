@@ -1,7 +1,11 @@
 from typing import Union, List, Dict, Tuple, Callable, Any
 
-from exceptions import EcsTaskConfigurationError, UnableToDetermineContainerName
-from remote_manager import LOGGER, ecs_client
+import boto3
+
+from parallelagram.utils import LOGGER
+from parallelagram.exceptions import EcsTaskConfigurationError, UnableToDetermineContainerName
+
+ecs_client = boto3.client('ecs')
 
 
 class Lambdable:
