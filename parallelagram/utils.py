@@ -35,3 +35,11 @@ def prep_s3_object(args: Union[tuple, list] = None, kwargs: dict = None, key: st
                          Body=bytes(json.dumps({'args': args, 'kwargs': kwargs}).encode('utf-8')),
                          Key=key)
     return key
+
+
+def get_s3_response(response: dict) -> dict:
+    """ Retrieve response from worker Lambda which stored its response in S3"""
+    s3_bucket = response.get('s3_bucket')
+    s3_key = response.get('s3_key')
+    LOGGER.info(f'Retrieving data from s3://{s3_bucket}/{s3_key}')
+    return json.loads(s3_client.get_object(Bucket=s3_bucket, Key=s3_key)['Body'].read().decode('utf-8'))

@@ -180,9 +180,6 @@ class LambdaAsyncResponse:
              ):
         """
         Create the message object and pass it to the actual sender.
-        request_s3_bucket: str = '',
-                 request_s3_key: str = '',
-                 response_to_s3: str = '',
         """
         message = {
                 'task_path': task_path,
@@ -218,10 +215,6 @@ ASYNC_CLASSES = {
     'lambda': LambdaAsyncResponse,
 }
 
-##
-# Execution interfaces and classes
-##
-
 
 def run(func=None,
         args: list = None,
@@ -239,7 +232,7 @@ def run(func=None,
     """
     Instead of decorating a function with @task, you can just run it directly.
     If you were going to do func(*args, **kwargs), then you will call this:
-request_s3_bucket: str = '',
+                request_s3_bucket: str = '',
                  request_s3_key: str = '',
                  response_to_s3: str = '',
     import zappa.asynchronous.run

@@ -99,7 +99,6 @@ class TestLaunchRemoteTasks:
 
     @patch('parallelagram.zappa_async_fork.LambdaAsyncResponse.send')
     def test_lambdable_list(self, mock_send):
-        #monkeypatch.setattr('parallelagram.remote_manager.run_lambdable_task', mock_return_response_id)
         mock_send.return_value = MockAsyncResponse()
 
         test_lambdable_captured = Lambdable(func_path='some.func.path',

@@ -10,3 +10,7 @@ class EcsTaskConfigurationError(Exception):
 
 class UnableToDetermineContainerName(Exception):
     pass
+
+
+class TimeoutError(Exception):
+    pass

@@ -1,13 +1,13 @@
 import os
+from time import sleep
 from typing import Union, List, Dict, Tuple, Callable, Any
 import uuid
 
 import boto3
 
-from parallelagram.utils import LOGGER, prep_s3_object
+from parallelagram.utils import LOGGER, prep_s3_object, get_s3_response
 from parallelagram.exceptions import EcsTaskConfigurationError, UnableToDetermineContainerName
-from parallelagram.zappa_async_fork import run
-
+from parallelagram.zappa_async_fork import run, get_async_response
 
 REQUEST_S3_BUCKET = os.getenv('REQUEST_S3_BUCKET', 'sg-phil-testing')
 ecs_client = boto3.client('ecs')
@@ -70,7 +70,18 @@ class Lambdable:
         self.remote_aws_region = remote_aws_region
         self.request_to_s3 = request_to_s3
         self.response_to_s3 = response_to_s3
-        self.response_id = None
+        self.s3_args = []
+        self.s3_kwargs = {}
+        self.response_id = ''  # type: str
+        self._response = None
+        self.invocation_response = None
+
+    def has_response(self) -> bool:
+        if self._response:
+            return True
+
+    def get_response(self):
+        return self._response
 
     def run_task(self):
         """ Invoke a remote lambda function specified by the Lambdable object, returning the response_id attribute of a
@@ -85,16 +96,16 @@ class Lambdable:
             request_key = prep_s3_object(args=self.args,
                                          kwargs=self.kwargs,
                                          key=response_id)
-            # Reset args and kwargs so they don't get sent over the wire as they've already been written to S3
-            # for retrieval by lambda worker
-            self.args = []
-            self.kwargs = {}
         else:
             request_key = ''
 
+        # Don't send args / kwargs over wire with task invocation if they were written to S3 already
+        send_args = [] if self.request_to_s3 else self.args
+        send_kwargs = {} if self.request_to_s3 else self.kwargs
+
         # Invoke the remote Lambda function with the arguments provided by the previously defined Lambdable
-        response = run(args=self.args,
-                       kwargs=self.kwargs,
+        response = run(args=send_args,
+                       kwargs=send_kwargs,
                        capture_response=self.capture_response,
                        remote_aws_lambda_function_name=self.remote_aws_lambda_func_name,
                        remote_aws_region=self.remote_aws_region,
@@ -105,7 +116,95 @@ class Lambdable:
                        request_s3_key=request_key,
                        response_to_s3=self.response_to_s3
                        )
+        self.invocation_response = response
         self.response_id = response_id
+
+    def try_getting_response(self):
+        """ Iterate over task response_ids, using each ID to look up an item in DynamoDB which will store the result of an
+            individual lambda task when it has completed. If a response is found for a task, remove its ID from the list so
+            it is not checked for again.
+        """
+
+        remote_response = get_async_response(self.response_id)
+        if remote_response is not None:
+            # if lambda is still running then just log a message and don't do anything with that ID
+            if remote_response.get('status') == 'in progress' and remote_response.get('response') == 'N/A':
+                LOGGER.info(f'lambda with response key {self.response_id} still running, check back later')
+            elif 'fail' in remote_response.get('status', ''):
+                self._response = remote_response
+                return True
+            else:
+                if 's3_response' in remote_response.get('response', {}) and remote_response.get('response').get('s3_response'):
+                    # Get response from S3
+                    self._response = get_s3_response(remote_response.get('response'))
+                    return True
+                else:
+                    # Response was retrieved from S3, add it to responses that have been collected
+                    self._response = remote_response.get('response')
+                    return True
+
+
+class ResponseCollector:
+
+    def __init__(self, lambdables: List[Lambdable], fail_on_timeout: bool = False):
+        self.lambdables = lambdables
+        self.num_tasks_completed = 0
+
+        self.max_total_wait = int(os.getenv('MAX_TOTAL_WAIT', 900))
+        if self.max_total_wait > 900:
+            LOGGER.info(
+                'MAX WAIT set to more than 15 minutes (900 seconds) - remote lambda workers can only execute for a '
+                'maximum of 15 minutes, so it is likely that they will start timing out after that time period. If '
+                'expecting remote workers to execute for longer than 15 minutes, consider using a Fargate or Batch '
+                'solution instead')
+        self.loop_wait = int(os.getenv('LOOP_WAIT_SECONDS', 15))
+        self.fail_on_timeout = fail_on_timeout
+
+    def run_tasks(self):
+        """ Launch remote tasks described in Lambdable list"""
+        for task in self.lambdables:
+            task.run_task()
+
+    def gather_responses(self):
+        """ Attempt to collect responses from tasks using response IDs returned when launching async lambda
+            functions.
+        """
+
+        total_wait = 0
+        num_tasks = len(self.lambdables)
+        num_responses_collected = 0
+
+        # While there are still response_ids to collect and time hasn't maxed out, keep trying to get response data from
+        # DynamoDB
+        while num_responses_collected < num_tasks and total_wait < self.max_total_wait:
+            for task in self.lambdables:
+                if not task.has_response():
+                    got_response = task.try_getting_response()
+                    if got_response:
+                        num_responses_collected += 1
+
+            # Not all responses collected yet, sleep for a user-specified amount of time before trying again
+            if num_responses_collected != num_tasks:
+                LOGGER.info("Didn't get all responses, going to sleep for a bit")
+                sleep(self.loop_wait)
+                total_wait += self.loop_wait
+            else:
+                # All responses gathered, return them to caller
+                LOGGER.info('Got all responses')
+                return
+
+        if num_responses_collected == num_tasks:
+            LOGGER.info('Got all responses')
+        elif total_wait >= self.max_total_wait:
+            if self.fail_on_timeout:
+                error_msg = 'gather_responses timed out while waiting for responses from remote tasks. If the remote ' \
+                            'task had not finished yet you may need to increase the max_total_wait. It is also possible' \
+                            'that the remote task itself timed out, particularly if it was a Lambda invocation.'
+                LOGGER.error(error_msg)
+                raise TimeoutError(error_msg)
+
+            LOGGER.warning(
+                'Timed out, returning what responses were collected but data is likely to be incomplete')
 
 
 class EcsTask:
