@@ -127,6 +127,7 @@ import boto3
 from parallelagram.utils import LOGGER
 from parallelagram.launchables import TaskMap, Lambdable
 from parallelagram.zappa_async_fork import get_async_response, task, get_func_task_path, run
+from utils import prep_s3_object
 
 s3_client = boto3.client('s3', region_name='us-west-2')
 ecs_client = boto3.client('ecs', region_name='us-west-2')
@@ -142,11 +143,12 @@ def launch_remote_tasks(tasks: Union[TaskMap, List[Lambdable]]) -> List[str]:
         for lambdable in tasks:
             if lambdable.capture_response:
                 # append to list of responses to check for in DynamoDB later
-                response_ids.append(run_lambdable_task(lambdable))
+                lambdable.run_task()
+                response_ids.append(lambdable.response_id)
             else:
                 # didn't care about getting a response from this lambdable, don't add it to the list of responses to
                 # check in on
-                run_lambdable_task(lambdable)
+                lambdable.run_task()
     elif isinstance(tasks, launchables.TaskMap):
         # Execute tasks in task map - TaskMap objects are supported to enable use with zappa-deployed functions
         for t, args in tasks:
@@ -258,22 +260,8 @@ def run_lambdable_task(lambdable: Lambdable) -> str:
                    request_s3_key=request_key,
                    response_to_s3=lambdable.response_to_s3
                    )
-    return response.response_id
-
-
-def prep_s3_object(args: Union[tuple, list] = None, kwargs: dict = None, key: str = ''):
-    """ Create an object in S3 which holds positional and keyword arguments to be unpacked by a Lambda worker later"""
-    if args is None:
-        args = []
-    if kwargs is None:
-        kwargs = {}
-    if not key:
-        key = str(uuid.uuid4())
-
-    s3_client.put_object(Bucket=REQUEST_S3_BUCKET,
-                         Body=bytes(json.dumps({'args': args, 'kwargs': kwargs}).encode('utf-8')),
-                         Key=key)
-    return key
+    #TODO: check response for error codes
+    return response_id
 
 
 def check_for_errors(response_datas: List[dict]):

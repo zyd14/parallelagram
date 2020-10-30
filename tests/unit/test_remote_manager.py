@@ -1,10 +1,12 @@
 from unittest.mock import patch
 from uuid import uuid4
 
+import attr
 import pytest
 
-from parallelagram.remote_manager import prep_s3_object, check_for_errors, run_lambdable_task, \
+from parallelagram.remote_manager import check_for_errors, run_lambdable_task, \
     launch_remote_tasks, try_getting_responses
+from utils import prep_s3_object
 from launchables import TaskMap
 from parallelagram import Lambdable
 
@@ -46,23 +48,29 @@ class TestS3Prep:
         assert len(key) > 20 and isinstance(key, str)
 
 
+@attr.s
+class MockAsyncResponse:
+    response_id = attr.ib(default=str(uuid4()))  # type: str
+
+
 class TestRunLambdableTask:
 
-    def test_no_request_to_s3(self, monkeypatch):
-
-        monkeypatch.setattr('parallelagram.remote_manager.run', mock_run)
-
+    @patch('parallelagram.zappa_async_fork.LambdaAsyncResponse.send')
+    def test_no_request_to_s3(self, mock_send):
+        mock_send.return_value = MockAsyncResponse()
         test_lambdable = Lambdable(func_path='some.func.path',
                                    remote_aws_lambda_func_name='some-lambda-func',
                                    args=[],
                                    kwargs={})
-        response_id = run_lambdable_task(test_lambdable)
-        assert len(response_id) > 20 and isinstance(response_id, str)
+        test_lambdable.run_task()
+        assert len(test_lambdable.response_id) > 20 and isinstance(test_lambdable.response_id, str)
+        assert mock_send.call_count == 1
 
-    @patch('parallelagram.remote_manager.s3_client.put_object', )
-    def test_with_request_to_s3(self, mock_put, monkeypatch):
+    @patch('parallelagram.zappa_async_fork.LambdaAsyncResponse.send')
+    @patch('parallelagram.utils.s3_client.put_object')
+    def test_with_request_to_s3(self, mock_put, mock_send, monkeypatch):
         mock_put.return_value = None
-        monkeypatch.setattr('parallelagram.remote_manager.run', mock_run)
+        mock_send.return_value = MockAsyncResponse()
 
         test_lambdable = Lambdable(func_path='some.func.path',
                                    remote_aws_lambda_func_name='some-lambda-func',
@@ -70,8 +78,8 @@ class TestRunLambdableTask:
                                    kwargs={},
                                    request_to_s3=True)
 
-        response_id = run_lambdable_task(test_lambdable)
-        assert response_id
+        test_lambdable.run_task()
+        assert test_lambdable.response_id
         assert mock_put.call_count == 1
 
 
@@ -89,8 +97,10 @@ class TestCheckForErrors:
 
 class TestLaunchRemoteTasks:
 
-    def test_lambdable_list(self, monkeypatch):
-        monkeypatch.setattr('parallelagram.remote_manager.run_lambdable_task', mock_return_response_id)
+    @patch('parallelagram.zappa_async_fork.LambdaAsyncResponse.send')
+    def test_lambdable_list(self, mock_send):
+        #monkeypatch.setattr('parallelagram.remote_manager.run_lambdable_task', mock_return_response_id)
+        mock_send.return_value = MockAsyncResponse()
 
         test_lambdable_captured = Lambdable(func_path='some.func.path',
                                             remote_aws_lambda_func_name='some-lambda-func',

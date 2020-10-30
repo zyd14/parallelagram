@@ -1,10 +1,15 @@
+import os
 from typing import Union, List, Dict, Tuple, Callable, Any
+import uuid
 
 import boto3
 
-from parallelagram.utils import LOGGER
+from parallelagram.utils import LOGGER, prep_s3_object
 from parallelagram.exceptions import EcsTaskConfigurationError, UnableToDetermineContainerName
+from parallelagram.zappa_async_fork import run
 
+
+REQUEST_S3_BUCKET = os.getenv('REQUEST_S3_BUCKET', 'sg-phil-testing')
 ecs_client = boto3.client('ecs')
 
 
@@ -65,6 +70,42 @@ class Lambdable:
         self.remote_aws_region = remote_aws_region
         self.request_to_s3 = request_to_s3
         self.response_to_s3 = response_to_s3
+        self.response_id = None
+
+    def run_task(self):
+        """ Invoke a remote lambda function specified by the Lambdable object, returning the response_id attribute of a
+            DynamoDB item to which the remote lambda function will write its return value to.
+        """
+
+        # Generate response ID so that DynamoDB item should have same ID should be the same string as the S3 key
+        # that the request will be stored under
+        response_id = str(uuid.uuid4())
+        if self.request_to_s3:
+            # Write args / kwargs to S3 so that lambda worker invoked by run() can retrieve them
+            request_key = prep_s3_object(args=self.args,
+                                         kwargs=self.kwargs,
+                                         key=response_id)
+            # Reset args and kwargs so they don't get sent over the wire as they've already been written to S3
+            # for retrieval by lambda worker
+            self.args = []
+            self.kwargs = {}
+        else:
+            request_key = ''
+
+        # Invoke the remote Lambda function with the arguments provided by the previously defined Lambdable
+        response = run(args=self.args,
+                       kwargs=self.kwargs,
+                       capture_response=self.capture_response,
+                       remote_aws_lambda_function_name=self.remote_aws_lambda_func_name,
+                       remote_aws_region=self.remote_aws_region,
+                       task_path=self.func_path,
+                       response_id=response_id,
+                       get_request_from_s3=self.request_to_s3,
+                       request_s3_bucket=REQUEST_S3_BUCKET,
+                       request_s3_key=request_key,
+                       response_to_s3=self.response_to_s3
+                       )
+        self.response_id = response_id
 
 
 class EcsTask:
