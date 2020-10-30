@@ -37,24 +37,20 @@ class RemoteLambdaSchema(Schema):
     memory_size = fields.Int(required=False, default=256, missing=256)
     s3_request_bucket = fields.Str(required=True)
     s3_response_bucket = fields.Str(required=True)
-    dynamo_response_table = fields.Str(required=False,
-                                       default='parallelagram_responses',
-                                       missing='parallelagram_responses')
-    response_table_read_capacity = fields.Int(required=False,
-                                              default=5,
-                                              missing=5)
-    response_table_write_capacity = fields.Int(required=False,
-                                               default=5,
-                                               missing=5)
-    iam_role = fields.Str(required=False,
-                          default='ParallelagramExecutionRole',
-                          missing='ParallelagramExecutionRole')
-    iam_policy = fields.Str(required=False,
-                            default='',
-                            missing='')
-    tracing = fields.Bool(required=False,
-                          default=False,
-                          missing=False)
+    dynamo_response_table = fields.Str(
+        required=False,
+        default="parallelagram_responses",
+        missing="parallelagram_responses",
+    )
+    response_table_read_capacity = fields.Int(required=False, default=5, missing=5)
+    response_table_write_capacity = fields.Int(required=False, default=5, missing=5)
+    iam_role = fields.Str(
+        required=False,
+        default="ParallelagramExecutionRole",
+        missing="ParallelagramExecutionRole",
+    )
+    iam_policy = fields.Str(required=False, default="", missing="")
+    tracing = fields.Bool(required=False, default=False, missing=False)
     runtime = fields.Str(required=True)
 
     @post_load()
@@ -71,13 +67,15 @@ class ParallelagramConfigSchema(Schema):
         return ParallelagramConfig(**data)
 
 
-def read_config(path: str = '../parallel-config.json') -> ParallelagramConfig:
-    with open(path, 'r') as in_conf:
+def read_config(path: str = "../parallel-config.json") -> ParallelagramConfig:
+    with open(path, "r") as in_conf:
         conf = json.load(in_conf)
     try:
         data = ParallelagramConfigSchema().load(conf)
     except ValidationError as ve:
-        print(f'Invalid configuration found at path {path}. Please check the config file and try again.')
+        print(
+            f"Invalid configuration found at path {path}. Please check the config file and try again."
+        )
         raise ve
 
     return data
