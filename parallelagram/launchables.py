@@ -70,11 +70,10 @@ class Lambdable:
         self.remote_aws_region = remote_aws_region
         self.request_to_s3 = request_to_s3
         self.response_to_s3 = response_to_s3
-        self.s3_args = []
-        self.s3_kwargs = {}
         self.response_id = ''  # type: str
         self._response = None
         self.invocation_response = None
+        self.error = False
 
     def has_response(self) -> bool:
         if self._response:
@@ -132,16 +131,26 @@ class Lambdable:
                 LOGGER.info(f'lambda with response key {self.response_id} still running, check back later')
             elif 'fail' in remote_response.get('status', ''):
                 self._response = remote_response
+                self.check_for_error()
                 return True
             else:
                 if 's3_response' in remote_response.get('response', {}) and remote_response.get('response').get('s3_response'):
                     # Get response from S3
                     self._response = get_s3_response(remote_response.get('response'))
+                    self.check_for_error()
                     return True
                 else:
                     # Response was retrieved from S3, add it to responses that have been collected
                     self._response = remote_response.get('response')
+                    self.check_for_error()
                     return True
+
+    def check_for_error(self):
+        if self._response:
+            response = self._response.get('response', '')
+            status = self._response.get('status', '')
+            if response == 'N/A' or status.lower() == 'failed' or 'UnhandledException' in response:
+                self.error = True
 
 
 class ResponseCollector:
@@ -159,6 +168,7 @@ class ResponseCollector:
                 'solution instead')
         self.loop_wait = int(os.getenv('LOOP_WAIT_SECONDS', 15))
         self.fail_on_timeout = fail_on_timeout
+        self.error_tasks = {}
 
     def run_tasks(self):
         """ Launch remote tasks described in Lambdable list"""
@@ -205,6 +215,24 @@ class ResponseCollector:
 
             LOGGER.warning(
                 'Timed out, returning what responses were collected but data is likely to be incomplete')
+        self.error_tasks = self.aggregate_errors(self.lambdables, error_null_responses=True)
+        if self.error_tasks:
+            LOGGER.error(f'Found error responses in the following tasks: {list(self.error_tasks.keys())}')
+
+    @staticmethod
+    def aggregate_errors(lambdable_list: List[Lambdable],
+                         error_tasks: dict = None,
+                         error_null_responses: bool = False):
+        if not error_tasks:
+            error_tasks = {}
+
+        for task in lambdable_list:
+            if task.error:
+                error_tasks.update({task.response_id: task.get_response()})
+            if error_null_responses:
+                if not task.get_response():
+                    error_tasks.update({task.response_id: task.get_response()})
+        return error_tasks
 
 
 class EcsTask:
