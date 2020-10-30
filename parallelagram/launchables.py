@@ -78,7 +78,7 @@ class Lambdable:
         self.request_to_s3 = request_to_s3
         self.response_to_s3 = response_to_s3
         self.response_id = ""  # type: str
-        self._response = None  # type: Optional[dict]
+        self._response = None  # type: Optional[Union[dict, str]]
         self.invocation_response = None
         self.error = False
 
@@ -86,7 +86,7 @@ class Lambdable:
         if self._response:
             return True
 
-    def get_response(self) -> Optional[dict]:
+    def get_response(self) -> Optional[Union[dict, str]]:
         return self._response
 
     def run_task(self):
@@ -262,8 +262,11 @@ class ResponseCollector:
                     error_tasks.update({task.response_id: task.get_response()})
         return error_tasks
 
-    def retrieve_responses(self) -> List[dict]:
-        return [l.get_response() for l in self.lambdables]
+    def retrieve_responses(self, return_null_responses: bool = True) -> List[Union[str, dict]]:
+        if return_null_responses:
+            return [l.get_response() for l in self.lambdables]
+        else:
+            return [l.get_response() for l in self.lambdables if l.get_response()]
 
 
 class EcsTask:
