@@ -124,40 +124,38 @@ import uuid
 
 import boto3
 
-from launchables import TaskMap
-from parallelagram import Lambdable
+from parallelagram.utils import LOGGER
+from parallelagram.launchables import TaskMap, Lambdable
+from parallelagram.zappa_async_fork import (
+    get_async_response,
+    task,
+    get_func_task_path,
+    run,
+)
+from utils import prep_s3_object
 
-from parallelagram.zappa_async_fork import get_async_response, task, get_func_task_path, run
-
-s3_client = boto3.client('s3', region_name='us-west-2')
-ecs_client = boto3.client('ecs', region_name='us-west-2')
-
-
-def create_logger() -> logging.Logger:
-    logger = logging.getLogger()
-    logger.setLevel('INFO')
-    sh = logging.StreamHandler()
-    sh.setLevel('INFO')
-    logger.addHandler(sh)
-    return logger
+s3_client = boto3.client("s3", region_name="us-west-2")
+ecs_client = boto3.client("ecs", region_name="us-west-2")
 
 
-LOGGER = create_logger()
-REQUEST_S3_BUCKET = os.getenv('REQUEST_S3_BUCKET', 'sg-phil-testing')
+REQUEST_S3_BUCKET = os.getenv("REQUEST_S3_BUCKET", "sg-phil-testing")
 
 
 def launch_remote_tasks(tasks: Union[TaskMap, List[Lambdable]]) -> List[str]:
+    import launchables
+
     response_ids = []
     if isinstance(tasks, list):
         for lambdable in tasks:
             if lambdable.capture_response:
                 # append to list of responses to check for in DynamoDB later
-                response_ids.append(run_lambdable_task(lambdable))
+                lambdable.run_task()
+                response_ids.append(lambdable.response_id)
             else:
                 # didn't care about getting a response from this lambdable, don't add it to the list of responses to
                 # check in on
-                run_lambdable_task(lambdable)
-    elif isinstance(tasks, TaskMap):
+                lambdable.run_task()
+    elif isinstance(tasks, launchables.TaskMap):
         # Execute tasks in task map - TaskMap objects are supported to enable use with zappa-deployed functions
         for t, args in tasks:
             # When task is executed the @task wrapper provided by zappa returns an object which provides a DynamoDB
@@ -165,7 +163,7 @@ def launch_remote_tasks(tasks: Union[TaskMap, List[Lambdable]]) -> List[str]:
             # get_async_response function (also brought to you by zappa) in order to retrieve the response from DynamoDB
             response_ids.append(t(*args[0], **args[1]).response_id)
     else:
-        error_msg = f'Unexpected task type {type(tasks)}'
+        error_msg = f"Unexpected task type {type(tasks)}"
         LOGGER.error(error_msg)
         raise TypeError(error_msg)
 
@@ -173,47 +171,53 @@ def launch_remote_tasks(tasks: Union[TaskMap, List[Lambdable]]) -> List[str]:
 
 
 def manage(task_map: Union[TaskMap, List[Lambdable]]) -> Union[List[str], None]:
-    """ Main method for executing tasks in a TaskMap as remote lambda functions, collecting their responses and
-        returning them to the caller.
+    """Main method for executing tasks in a TaskMap as remote lambda functions, collecting their responses and
+    returning them to the caller.
 
-        Args:
-            task_map: a TaskMap object holding tasks to be executed asynchronously
+    Args:
+        task_map: a TaskMap object holding tasks to be executed asynchronously
 
-        Returns:
-            list of response_ids identifying DynamoDB items to which remote lambda invocations will write the results of
-            their execution.
+    Returns:
+        list of response_ids identifying DynamoDB items to which remote lambda invocations will write the results of
+        their execution.
     """
 
     if len(task_map) < 1:
-        LOGGER.info('No tasks added')
+        LOGGER.info("No tasks added")
         return
 
     response_ids = launch_remote_tasks(task_map)
 
     if not response_ids:
-        LOGGER.info("No responses collected as capture_response=False for all Lambdables. Either you don't care"
-                    "about responses from your workers or some error has occurred.")
+        LOGGER.info(
+            "No responses collected as capture_response=False for all Lambdables. Either you don't care"
+            "about responses from your workers or some error has occurred."
+        )
         return
 
     total_wait = 0
 
     # Initial wait period gives the lambdas a period of time to get going before looking for their results
-    initial_wait = int(os.getenv('INITIAL_WAIT_SECONDS', 5))
+    initial_wait = int(os.getenv("INITIAL_WAIT_SECONDS", 5))
     sleep(initial_wait)
     total_wait += initial_wait
 
-    max_total_wait = int(os.getenv('MAX_TOTAL_WAIT', 900))
+    max_total_wait = int(os.getenv("MAX_TOTAL_WAIT", 900))
     if max_total_wait > 900:
-        LOGGER.info('MAX WAIT set to more than 15 minutes (900 seconds) - remote lambda workers can only execute for a '
-                    'maximum of 15 minutes, so it is likely that they will start timing out after that time period. If '
-                    'expecting remote workers to execute for longer than 15 minutes, consider using a Fargate or Batch '
-                    'solution instead')
+        LOGGER.info(
+            "MAX WAIT set to more than 15 minutes (900 seconds) - remote lambda workers can only execute for a "
+            "maximum of 15 minutes, so it is likely that they will start timing out after that time period. If "
+            "expecting remote workers to execute for longer than 15 minutes, consider using a Fargate or Batch "
+            "solution instead"
+        )
     num_tasks = len(response_ids)
 
     if response_ids:
         response_datas = profit(response_ids, total_wait, max_total_wait, num_tasks)
         if len(response_datas) != num_tasks:
-            LOGGER.warning('Not all responses collected from tasks, return data will likely be incomplete')
+            LOGGER.warning(
+                "Not all responses collected from tasks, return data will likely be incomplete"
+            )
 
         # Error handling is pretty basic right now - zappa-executed async lambda tasks seem to consistently return
         # "N/A" as the 'response' key, so we can at least look for that to try to detect errors.
@@ -226,17 +230,19 @@ def manage(task_map: Union[TaskMap, List[Lambdable]]) -> Union[List[str], None]:
         # stored, enabling us to actually get the traceback when get_async_response is called
         errors = check_for_errors(response_datas)
         if errors:
-            LOGGER.error('Some errors were detected')
+            LOGGER.error("Some errors were detected")
         return response_datas
     else:
-        LOGGER.warning('No tasks created')
+        LOGGER.warning("No tasks created")
 
 
-def run_lambdable_task(lambdable: Lambdable):
-    """ Invoke a remote lambda function specified by the Lambdable object, returning the response_id attribute of a
-        DynamoDB item to which the remote lambda function will write its return value to.
+def run_lambdable_task(lambdable: Lambdable) -> str:
+    """Invoke a remote lambda function specified by the Lambdable object, returning the response_id attribute of a
+    DynamoDB item to which the remote lambda function will write its return value to.
     """
-    if not isinstance(lambdable, Lambdable):
+    import launchables
+
+    if not isinstance(lambdable, launchables.Lambdable):
         raise Exception("Can't execute non-Lambdable tasks in lists yet")
 
     # Generate response ID so that DynamoDB item should have same ID should be the same string as the S3 key
@@ -244,57 +250,50 @@ def run_lambdable_task(lambdable: Lambdable):
     response_id = str(uuid.uuid4())
     if lambdable.request_to_s3:
         # Write args / kwargs to S3 so that lambda worker invoked by run() can retrieve them
-        request_key = prep_s3_object(args=lambdable.args,
-                                     kwargs=lambdable.kwargs,
-                                     key=response_id)
+        request_key = prep_s3_object(
+            args=lambdable.args, kwargs=lambdable.kwargs, key=response_id
+        )
         # Reset args and kwargs so they don't get sent over the wire as they've already been written to S3
         # for retrieval by lambda worker
         lambdable.args = []
         lambdable.kwargs = {}
     else:
-        request_key = ''
+        request_key = ""
 
     # Invoke the remote Lambda function with the arguments provided by the previously defined Lambdable
-    response = run(args=lambdable.args,
-                   kwargs=lambdable.kwargs,
-                   capture_response=lambdable.capture_response,
-                   remote_aws_lambda_function_name=lambdable.remote_aws_lambda_func_name,
-                   remote_aws_region=lambdable.remote_aws_region,
-                   task_path=lambdable.func_path,
-                   response_id=response_id,
-                   get_request_from_s3=lambdable.request_to_s3,
-                   request_s3_bucket=REQUEST_S3_BUCKET,
-                   request_s3_key=request_key,
-                   response_to_s3=lambdable.response_to_s3
-                   )
-    return response.response_id
-
-
-def prep_s3_object(args: Union[tuple, list] = None, kwargs: dict = None, key: str = ''):
-    """ Create an object in S3 which holds positional and keyword arguments to be unpacked by a Lambda worker later"""
-    if args is None:
-        args = []
-    if kwargs is None:
-        kwargs = {}
-    if not key:
-        key = str(uuid.uuid4())
-
-    s3_client.put_object(Bucket=REQUEST_S3_BUCKET,
-                         Body=bytes(json.dumps({'args': args, 'kwargs': kwargs}).encode('utf-8')),
-                         Key=key)
-    return key
+    response = run(
+        args=lambdable.args,
+        kwargs=lambdable.kwargs,
+        capture_response=lambdable.capture_response,
+        remote_aws_lambda_function_name=lambdable.remote_aws_lambda_func_name,
+        remote_aws_region=lambdable.remote_aws_region,
+        task_path=lambdable.func_path,
+        response_id=response_id,
+        get_request_from_s3=lambdable.request_to_s3,
+        request_s3_bucket=REQUEST_S3_BUCKET,
+        request_s3_key=request_key,
+        response_to_s3=lambdable.response_to_s3,
+    )
+    # TODO: check response for error codes
+    return response_id
 
 
 def check_for_errors(response_datas: List[dict]):
     errors = []
     for r in response_datas:
-        if r.get('response') == 'N/A' or r.get('status') == 'failed' or 'UnhandledException' in r.get('response', ''):
+        if (
+            r.get("response") == "N/A"
+            or r.get("status") == "failed"
+            or "UnhandledException" in r.get("response", "")
+        ):
             errors.append(r)
     return errors
 
 
-def profit(response_ids: List[str], total_wait: int, max_total_wait: int, num_tasks: int) -> list:
-    """ Attempt to collect responses from tasks using response IDs returned when launching async lambda functions.
+def profit(
+    response_ids: List[str], total_wait: int, max_total_wait: int, num_tasks: int
+) -> list:
+    """Attempt to collect responses from tasks using response IDs returned when launching async lambda functions.
 
     Args:
         response_ids: List of response IDs corresponding to an item in DynamoDB where the response from a remote task
@@ -307,7 +306,7 @@ def profit(response_ids: List[str], total_wait: int, max_total_wait: int, num_ta
     Returns:
         list of values returned by remote lambda invocations, usually represented as dictionaries
     """
-    loop_wait = int(os.getenv('LOOP_WAIT_SECONDS', 15))
+    loop_wait = int(os.getenv("LOOP_WAIT_SECONDS", 15))
 
     response_datas = []
     num_responses_collected = 0
@@ -315,10 +314,12 @@ def profit(response_ids: List[str], total_wait: int, max_total_wait: int, num_ta
     # While there are still response_ids to collect and time hasn't maxed out, keep trying to get response data from
     # DynamoDB
     while len(response_ids) > 0 and total_wait < max_total_wait:
-        LOGGER.info(f'Response IDs: {response_ids}')
-        response_datas, response_ids, num_responses_collected = try_getting_responses(response_ids=response_ids,
-                                                                                      response_datas=response_datas,
-                                                                                      num_responses_collected=num_responses_collected)
+        LOGGER.info(f"Response IDs: {response_ids}")
+        response_datas, response_ids, num_responses_collected = try_getting_responses(
+            response_ids=response_ids,
+            response_datas=response_datas,
+            num_responses_collected=num_responses_collected,
+        )
 
         # Not all responses collected yet, sleep for a user-specified amount of time before trying again
         if num_responses_collected != num_tasks:
@@ -330,40 +331,47 @@ def profit(response_ids: List[str], total_wait: int, max_total_wait: int, num_ta
             return response_datas
 
     if num_responses_collected == num_tasks:
-        LOGGER.info('got all responses!')
+        LOGGER.info("got all responses!")
         return response_datas
     elif total_wait >= max_total_wait:
-        LOGGER.warning('Timed out, returning what responses were collected but data is likely to be incomplete')
+        LOGGER.warning(
+            "Timed out, returning what responses were collected but data is likely to be incomplete"
+        )
         return response_datas
 
 
-def try_getting_responses(response_ids: List[str],
-                          response_datas: List[dict],
-                          num_responses_collected: int) -> Tuple[List[dict], List[str], int]:
-    """ Iterate over task response_ids, using each ID to look up an item in DynamoDB which will store the result of an
-        individual lambda task when it has completed. If a response is found for a task, remove its ID from the list so
-        it is not checked for again.
+def try_getting_responses(
+    response_ids: List[str], response_datas: List[dict], num_responses_collected: int
+) -> Tuple[List[dict], List[str], int]:
+    """Iterate over task response_ids, using each ID to look up an item in DynamoDB which will store the result of an
+    individual lambda task when it has completed. If a response is found for a task, remove its ID from the list so
+    it is not checked for again.
     """
     response_ids_collected = []
     for r in response_ids:
         response = get_async_response(r)
         if response is not None:
             # if lambda is still running then just log a message and don't do anything with that ID
-            if response.get('status') == 'in progress' and response.get('response') == 'N/A':
-                LOGGER.info(f'lambda {r} still going, check back later')
-            elif 'fail' in response.get('status', ''):
+            if (
+                response.get("status") == "in progress"
+                and response.get("response") == "N/A"
+            ):
+                LOGGER.info(f"lambda {r} still going, check back later")
+            elif "fail" in response.get("status", ""):
                 response_datas.append(response)
                 response_ids_collected.append(r)
                 num_responses_collected += 1
             else:
-                if 's3_response' in response.get('response', {}) and response.get('response').get('s3_response'):
+                if "s3_response" in response.get("response", {}) and response.get(
+                    "response"
+                ).get("s3_response"):
                     # Get response from S3
-                    response_datas.append(get_s3_response(response.get('response')))
+                    response_datas.append(get_s3_response(response.get("response")))
                     response_ids_collected.append(r)
                     num_responses_collected += 1
                 else:
                     # Response was retrieved from S3, add it to responses that have been collected
-                    response_datas.append(response.get('response'))
+                    response_datas.append(response.get("response"))
                     response_ids_collected.append(r)
                     num_responses_collected += 1
 
@@ -374,8 +382,8 @@ def try_getting_responses(response_ids: List[str],
 
 
 def remove_collected_ids(response_ids_collected: List[str], response_ids: List[str]):
-    """ Remove any response IDs that have been collected already from the list of response IDs that are being looked
-        for
+    """Remove any response IDs that have been collected already from the list of response IDs that are being looked
+    for
     """
     for r in response_ids_collected:
         try:
@@ -386,38 +394,45 @@ def remove_collected_ids(response_ids_collected: List[str], response_ids: List[s
 
 def get_s3_response(response: dict) -> dict:
     """ Retrieve response from worker Lambda which stored its response in S3"""
-    s3_bucket = response.get('s3_bucket')
-    s3_key = response.get('s3_key')
-    LOGGER.info(f'Retrieving data from s3://{s3_bucket}/{s3_key}')
-    s3 = boto3.client('s3', region_name='us-west-2')
-    return json.loads(s3.get_object(Bucket=s3_bucket, Key=s3_key)['Body'].read().decode('utf-8'))
+    s3_bucket = response.get("s3_bucket")
+    s3_key = response.get("s3_key")
+    LOGGER.info(f"Retrieving data from s3://{s3_bucket}/{s3_key}")
+    s3 = boto3.client("s3", region_name="us-west-2")
+    return json.loads(
+        s3.get_object(Bucket=s3_bucket, Key=s3_key)["Body"].read().decode("utf-8")
+    )
 
 
 def remote_runner(*args, **kwargs) -> Callable:
     func = args[0]
-    remote_aws_lambda_function_name = kwargs.pop('remote_aws_lambda_function_name', 'remote-phil-dev')
-    remote_aws_region = kwargs.pop('remote_aws_region', 'us-west-2')
-    capture_response = kwargs.pop('capture_response', True)
+    remote_aws_lambda_function_name = kwargs.pop(
+        "remote_aws_lambda_function_name", "remote-phil-dev"
+    )
+    remote_aws_region = kwargs.pop("remote_aws_region", "us-west-2")
+    capture_response = kwargs.pop("capture_response", True)
 
     def func_wrapper(func):
         task_path = get_func_task_path(func)
-        LOGGER.info(f'Using task path {task_path}')
+        LOGGER.info(f"Using task path {task_path}")
 
         @wraps(func)
-        @task(remote_aws_lambda_function_name=remote_aws_lambda_function_name,
-              remote_aws_region=remote_aws_region,
-              capture_response=capture_response,
-              task_path=task_path)
+        @task(
+            remote_aws_lambda_function_name=remote_aws_lambda_function_name,
+            remote_aws_region=remote_aws_region,
+            capture_response=capture_response,
+            task_path=task_path,
+        )
         def _run_task(*args, **kwargs):
             try:
                 return func(*args, **kwargs)
             except Exception as exc:
                 import traceback
+
                 logger = logging.getLogger()
                 tb = traceback.format_exc()
-                logger.error(f'Unhandled exception occurred: {exc}')
-                logger.error(f'{tb}')
-                return {'UnhandledException': tb}
+                logger.error(f"Unhandled exception occurred: {exc}")
+                logger.error(f"{tb}")
+                return {"UnhandledException": tb}
 
         update_wrapper(_run_task, func)
         return _run_task

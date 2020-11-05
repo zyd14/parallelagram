@@ -84,6 +84,7 @@ Discussion of this comes from:
    and in the current lambda function.
 
 """
+import traceback
 from time import time
 
 from functools import update_wrapper, wraps
@@ -93,25 +94,28 @@ import logging
 import json
 import os
 import uuid
+from time import sleep
+from threading import Thread
 from typing import Union
 
 import boto3
 
+from exceptions import AsyncException, TaskTimeoutError, TaskException
 
-ASYNC_RESPONSE_TABLE = 'phils_done_tasks'
-dynamo_client = boto3.client('dynamodb', region_name='us-west-2')
+ASYNC_RESPONSE_TABLE = "phils_done_tasks"
+dynamo_client = boto3.client("dynamodb", region_name="us-west-2")
 # Declare these here so they're kept warm.
 aws_session = boto3.Session()
-LAMBDA_CLIENT = aws_session.client('lambda', region_name='us-west-2')
+LAMBDA_CLIENT = aws_session.client("lambda", region_name="us-west-2")
 
-s3_client = boto3.client('s3', region_name='us-west-2')
+s3_client = boto3.client("s3", region_name="us-west-2")
 
 
 def create_logger() -> logging.Logger:
     logger = logging.getLogger()
-    logger.setLevel('INFO')
+    logger.setLevel("INFO")
     sh = logging.StreamHandler()
-    sh.setLevel('INFO')
+    sh.setLevel("INFO")
     logger.addHandler(sh)
     return logger
 
@@ -125,25 +129,23 @@ LOGGER = create_logger()
 LAMBDA_ASYNC_PAYLOAD_LIMIT = 256000
 
 
-class AsyncException(Exception):
-    """ Simple exception class for async tasks. """
-    pass
-
-
 class LambdaAsyncResponse:
     """
     Base Response Dispatcher class
     Can be used directly or subclassed if the method to send the message is changed.
     """
-    def __init__(self,
-                 lambda_function_name: str = '',
-                 aws_region: str = '',
-                 capture_response: bool = False,
-                 response_id: str = '',
-                 **kwargs):
+
+    def __init__(
+        self,
+        lambda_function_name: str = "",
+        aws_region: str = "",
+        capture_response: bool = False,
+        response_id: str = "",
+        **kwargs,
+    ):
         """ """
-        if kwargs.get('boto_session'):
-            self.client = kwargs.get('boto_session').client('lambda')
+        if kwargs.get("boto_session"):
+            self.client = kwargs.get("boto_session").client("lambda")
         else:  # pragma: no cover
             self.client = LAMBDA_CLIENT
 
@@ -169,32 +171,30 @@ class LambdaAsyncResponse:
 
         self.capture_response = capture_response
 
-    def send(self,
-             task_path: str,
-             args: Union[tuple, list],
-             kwargs: dict,
-             get_request_from_s3: bool,
-             request_s3_bucket: str,
-             request_s3_key: str,
-             response_to_s3: bool = False
-             ):
+    def send(
+        self,
+        task_path: str,
+        args: Union[tuple, list],
+        kwargs: dict,
+        get_request_from_s3: bool,
+        request_s3_bucket: str,
+        request_s3_key: str,
+        response_to_s3: bool = False,
+    ):
         """
         Create the message object and pass it to the actual sender.
-        request_s3_bucket: str = '',
-                 request_s3_key: str = '',
-                 response_to_s3: str = '',
         """
         message = {
-                'task_path': task_path,
-                'capture_response': self.capture_response,
-                'response_id': self.response_id,
-                'args': args,
-                'kwargs': kwargs,
-                'get_request_from_s3': get_request_from_s3,
-                'request_s3_bucket': request_s3_bucket,
-                'request_s3_key': request_s3_key,
-                'response_to_s3': response_to_s3
-            }
+            "task_path": task_path,
+            "capture_response": self.capture_response,
+            "response_id": self.response_id,
+            "args": args,
+            "kwargs": kwargs,
+            "get_request_from_s3": get_request_from_s3,
+            "request_s3_bucket": request_s3_bucket,
+            "request_s3_key": request_s3_key,
+            "response_to_s3": response_to_s3,
+        }
         self._send(message)
         return self
 
@@ -202,44 +202,42 @@ class LambdaAsyncResponse:
         """
         Given a message, directly invoke the lambda function for this task.
         """
-        message['command'] = 'zappa.asynchronous.route_lambda_task'
-        payload = json.dumps(message).encode('utf-8')
+        message["command"] = "zappa.asynchronous.route_lambda_task"
+        payload = json.dumps(message).encode("utf-8")
         if len(payload) > LAMBDA_ASYNC_PAYLOAD_LIMIT:  # pragma: no cover
             raise AsyncException("Payload too large for async Lambda call")
         self.response = self.client.invoke(
-                                    FunctionName=self.lambda_function_name,
-                                    InvocationType='Event',  # makes the call async
-                                    Payload=payload
-                                )
-        self.sent = (self.response.get('StatusCode', 0) == 202)
+            FunctionName=self.lambda_function_name,
+            InvocationType="Event",  # makes the call async
+            Payload=payload,
+        )
+        self.sent = self.response.get("StatusCode", 0) == 202
 
 
 ASYNC_CLASSES = {
-    'lambda': LambdaAsyncResponse,
+    "lambda": LambdaAsyncResponse,
 }
 
-##
-# Execution interfaces and classes
-##
 
-
-def run(func=None,
-        args: list = None,
-        kwargs: dict = None,
-        capture_response: bool = False,
-        remote_aws_lambda_function_name: str = None,
-        remote_aws_region: str = None,
-        task_path: str = '',
-        response_id: str = '',
-        get_request_from_s3: bool = False,
-        request_s3_bucket: str = '',
-        request_s3_key: str = '',
-        response_to_s3: bool = False,
-        **task_kwargs):
+def run(
+    func=None,
+    args: list = None,
+    kwargs: dict = None,
+    capture_response: bool = False,
+    remote_aws_lambda_function_name: str = None,
+    remote_aws_region: str = None,
+    task_path: str = "",
+    response_id: str = "",
+    get_request_from_s3: bool = False,
+    request_s3_bucket: str = "",
+    request_s3_key: str = "",
+    response_to_s3: bool = False,
+    **task_kwargs,
+):
     """
     Instead of decorating a function with @task, you can just run it directly.
     If you were going to do func(*args, **kwargs), then you will call this:
-request_s3_bucket: str = '',
+                request_s3_bucket: str = '',
                  request_s3_key: str = '',
                  response_to_s3: str = '',
     import zappa.asynchronous.run
@@ -252,23 +250,29 @@ request_s3_bucket: str = '',
     if kwargs is None:
         kwargs = {}
 
-    lambda_function_name = remote_aws_lambda_function_name or os.environ.get('AWS_LAMBDA_FUNCTION_NAME')
-    aws_region = remote_aws_region or os.environ.get('AWS_REGION')
+    lambda_function_name = remote_aws_lambda_function_name or os.environ.get(
+        "AWS_LAMBDA_FUNCTION_NAME"
+    )
+    aws_region = remote_aws_region or os.environ.get("AWS_REGION")
 
     if not task_path:
         task_path = get_func_task_path(func)
 
-    return LambdaAsyncResponse(lambda_function_name=lambda_function_name,
-                               aws_region=aws_region,
-                               capture_response=capture_response,
-                               response_id=response_id,
-                               **task_kwargs).send(task_path=task_path,
-                                                   args=args,
-                                                   kwargs=kwargs,
-                                                   get_request_from_s3=get_request_from_s3,
-                                                   request_s3_bucket=request_s3_bucket,
-                                                   request_s3_key=request_s3_key,
-                                                   response_to_s3=response_to_s3)
+    return LambdaAsyncResponse(
+        lambda_function_name=lambda_function_name,
+        aws_region=aws_region,
+        capture_response=capture_response,
+        response_id=response_id,
+        **task_kwargs,
+    ).send(
+        task_path=task_path,
+        args=args,
+        kwargs=kwargs,
+        get_request_from_s3=get_request_from_s3,
+        request_s3_bucket=request_s3_bucket,
+        request_s3_key=request_s3_key,
+        response_to_s3=response_to_s3,
+    )
 
 
 # Handy:
@@ -298,20 +302,19 @@ def task(*args, **kwargs):
         func = args[0]
 
     if not kwargs:  # Default Values
-        service = 'lambda'
+        service = "lambda"
         lambda_function_name_arg = None
         aws_region_arg = None
         task_path = None
     else:  # Arguments were passed
-        service = kwargs.get('service', 'lambda')
-        lambda_function_name_arg = kwargs.get('remote_aws_lambda_function_name')
-        aws_region_arg = kwargs.get('remote_aws_region')
-        task_path = kwargs.get('task_path')
+        service = kwargs.get("service", "lambda")
+        lambda_function_name_arg = kwargs.get("remote_aws_lambda_function_name")
+        aws_region_arg = kwargs.get("remote_aws_region")
+        task_path = kwargs.get("task_path")
 
-    capture_response = kwargs.get('capture_response', False)
+    capture_response = kwargs.get("capture_response", False)
 
     def func_wrapper(func):
-
         @wraps(func)
         def _run_async(*args, **kwargs):
             """
@@ -332,17 +335,23 @@ def task(*args, **kwargs):
                 When outside of Lambda, the func passed to @task is run and we
                 return the actual value.
             """
-            lambda_function_name = lambda_function_name_arg or os.environ.get('AWS_LAMBDA_FUNCTION_NAME')
-            aws_region = aws_region_arg or os.environ.get('AWS_REGION')
+            lambda_function_name = lambda_function_name_arg or os.environ.get(
+                "AWS_LAMBDA_FUNCTION_NAME"
+            )
+            aws_region = aws_region_arg or os.environ.get("AWS_REGION")
 
-            send_result = LambdaAsyncResponse(lambda_function_name=lambda_function_name,
-                                              aws_region=aws_region,
-                                              capture_response=capture_response).send(task_path=task_path,
-                                                                                      args=args,
-                                                                                      kwargs=kwargs,
-                                                                                      get_request_from_s3=False,
-                                                                                      request_s3_bucket='',
-                                                                                      request_s3_key='')
+            send_result = LambdaAsyncResponse(
+                lambda_function_name=lambda_function_name,
+                aws_region=aws_region,
+                capture_response=capture_response,
+            ).send(
+                task_path=task_path,
+                args=args,
+                kwargs=kwargs,
+                get_request_from_s3=False,
+                request_s3_bucket="",
+                request_s3_key="",
+            )
             return send_result
 
         update_wrapper(_run_async, func)
@@ -359,12 +368,13 @@ def task(*args, **kwargs):
 # Utility Functions
 ##
 
+
 def import_and_get_task(task_path):
     """
     Given a modular path to a function, import that module
     and return the function.
     """
-    module, function = task_path.rsplit('.', 1)
+    module, function = task_path.rsplit(".", 1)
     app_module = importlib.import_module(module)
     app_function = getattr(app_module, function)
     return app_function
@@ -375,10 +385,9 @@ def get_func_task_path(func):
     Format the modular task path for a function via inspection.
     """
     module_path = inspect.getmodule(func).__name__
-    task_path = '{module_path}.{func_name}'.format(
-                                        module_path=module_path,
-                                        func_name=func.__name__
-                                    )
+    task_path = "{module_path}.{func_name}".format(
+        module_path=module_path, func_name=func.__name__
+    )
     return task_path
 
 
@@ -387,27 +396,28 @@ def get_async_response(response_id):
     Get the response from the async table
     """
     response = dynamo_client.get_item(
-        TableName=ASYNC_RESPONSE_TABLE,
-        Key={'id': {'S': str(response_id)}}
+        TableName=ASYNC_RESPONSE_TABLE, Key={"id": {"S": str(response_id)}}
     )
-    if 'Item' not in response:
+    if "Item" not in response:
         return None
 
     return {
-        'status': response['Item']['async_status']['S'],
-        'response': json.loads(response['Item']['async_response']['S']),
+        "status": response["Item"]["async_status"]["S"],
+        "response": json.loads(response["Item"]["async_response"]["S"]),
     }
 
 
-def remotely_run(task_path: str = '',
-                 capture_response: bool = True,
-                 response_id: str = '',
-                 get_request_from_s3: bool = False,
-                 request_s3_bucket: str = '',
-                 request_s3_key: str = '',
-                 response_to_s3: str = '',
-                 args: list = None,
-                 kwargs: dict = None):
+def remotely_run(
+    task_path: str = "",
+    capture_response: bool = True,
+    response_id: str = "",
+    get_request_from_s3: bool = False,
+    request_s3_bucket: str = "",
+    request_s3_key: str = "",
+    response_to_s3: str = "",
+    args: list = None,
+    kwargs: dict = None,
+):
     """
     Runs a function dynamically imported from a task_path provided as a key in the message parameter provided to
     remotely_run.  If the capture_response key of the message is also True, create an item in a DynamoDB table which
@@ -416,96 +426,152 @@ def remotely_run(task_path: str = '',
     """
     if get_request_from_s3:
         # Retrieve request from S3 - should have been written by remote_manager.manage() in caller code
-        request = json.loads(s3_client.get_object(Bucket=request_s3_bucket,
-                                                  Key=request_s3_key)['Body'].read().decode('utf-8'))
-        args = request.get('args', [])
-        kwargs = request.get('kwargs', {})
+        request = json.loads(
+            s3_client.get_object(Bucket=request_s3_bucket, Key=request_s3_key)["Body"]
+            .read()
+            .decode("utf-8")
+        )
+        args = request.get("args", [])
+        kwargs = request.get("kwargs", {})
     if capture_response:
         # Create item in dynamo table showing task is in progress
         dynamo_client.put_item(
             TableName=ASYNC_RESPONSE_TABLE,
             Item={
-                'id': {'S': str(response_id)},
-                'ttl': {'N': str(int(time()+900))},
-                'async_status': {'S': 'in progress'},
-                'async_response': {'S': str(json.dumps('N/A'))},
-            }
+                "id": {"S": str(response_id)},
+                "ttl": {"N": str(int(time() + int(os.getenv('RESPONSE_TTL', 900))))},
+                "async_status": {"S": "in progress"},
+                "async_response": {"S": str(json.dumps("N/A"))},
+            },
         )
     func = import_and_get_task(task_path)
     # Run function
     try:
-        response = func(
-            *args,
-            **kwargs
-        )
-        status = 'completed'
-        if response_to_s3:
-            response_key = str(uuid.uuid4())
-            response_bucket = os.getenv('S3_RESPONSE_BUCKET', 'sg-phil-testing')
-            s3_client.put_object(Body=bytes(json.dumps(response).encode('UTF-8')),
-                                 Bucket=response_bucket,
-                                 Key=response_key)
-            LOGGER.info(f'Wrote response to S3 at s3://{response_bucket}/{response_key}')
-            response = {'s3_response': True, 's3_bucket': response_bucket, 's3_key': response_key}
+        response = func(*args, **kwargs)
     except Exception as exc:
-        status = 'failed'
-        import traceback
-        logger = logging.getLogger()
+        error_msg = f'Unhandled exception occurred while executing function {func.__name__}. Exception: {exc}'
+        LOGGER.error(error_msg)
         tb = traceback.format_exc()
-        logger.error(f'Unhandled exception occurred: {exc}')
-        logger.error(f'{tb}')
-        response = {'UnhandledException': tb}
+        LOGGER.error(f'{tb}')
+        raise TaskException(task_exception=exc, tb=tb)
+
+    status = "completed"
+    if response_to_s3:
+        response = put_response_in_s3(response)
 
     if capture_response:
         # Update dynamo item with completed or failed status and response from function or traceback if
         # exception occurred
-        dynamo_client.update_item(
-            TableName=ASYNC_RESPONSE_TABLE,
-            Key={'id': {'S': str(response_id)}},
-            UpdateExpression="SET async_response = :r, async_status = :s",
-            ExpressionAttributeValues={
-                ':r': {'S': str(json.dumps(response))},
-                ':s': {'S': status},
-            },
-        )
+        update_run_table_item(response_id=response_id,
+                              response=response,
+                              status=status)
 
     return response
 
 
+def put_response_in_s3(response: dict) -> dict:
+    response_key = str(uuid.uuid4())
+    response_bucket = os.getenv("S3_RESPONSE_BUCKET", "sg-phil-testing")
+    try:
+        response_out = json.dumps({'remote_response': response})
+    except json.JSONEncoder:
+        response_out = str(response)
+    s3_client.put_object(
+        Body=bytes(response_out.encode("UTF-8")),
+        Bucket=response_bucket,
+        Key=response_key,
+    )
+    LOGGER.info(
+        f"Wrote response to S3 at s3://{response_bucket}/{response_key}"
+    )
+    return {
+        "s3_response": True,
+        "s3_bucket": response_bucket,
+        "s3_key": response_key,
+    }
+
+
+def update_run_table_item(response_id: str, response: Union[dict, str], status: str):
+    # TODO: Add exception to item if status=FAILED
+    if isinstance(response, dict):
+        out_response = json.dumps(response)
+    else:
+        out_response = response
+    dynamo_client.update_item(
+        TableName=ASYNC_RESPONSE_TABLE,
+        Key={'id': {'S': str(response_id)}},
+        UpdateExpression="SET async_response = :r, async_status = :s",
+        ExpressionAttributeValues={
+            ':r': {'S': out_response},
+            ':s': {'S': status},
+        },
+    )
+
+
 def remote_handler(func):
-    """ This decorator can be used to decorate a lambda function handler, so that when the decorated handler is invoked
-        asynchronously with a message key in the event it will use the remotely_run function to execute the local
-        function defined by the 'task_path' key in the message dict, as well as store execution status and output in a
-        DynamoDB item for later retrieval by the invoker.
+    """This decorator can be used to decorate a lambda function handler, so that when the decorated handler is invoked
+            asynchronously with a message key in the event it will use the remotely_run function to execute the local
+            function defined by the 'task_path' key in the message dict, as well as store execution status and output in a
+            DynamoDB item for later retrieval by the invoker.
 
-        If a message key is not present in the event then the decorated function handler will be invoked with the raw
-        event and context arguments as a handler usually would be.
+            If a message key is not present in the event then the decorated function handler will be invoked with the raw
+            event and context arguments as a handler usually would be.
 
-        Because zappa dynamically generates its handler function on deployment, it is currently not possible to use this
-        wrapper on zappa-deployed functions.  Users who deploy their lambdas via zappa should use the @task (original
-        zappa wrapper) or @remote_runner function wrappers instead, which should both still play nice with the manager
-        functionalities provided in remote_manager.
+            Because zappa dynamically generates its handler function on deployment, it is currently not possible to use this
+            wrapper on zappa-deployed functions.  Users who deploy their lambdas via zappa should use the @task (original
+            zappa wrapper) or @remote_runner function wrappers instead, which should both still play nice with the manager
+            functionalities provided in remote_manager.
 
-        Example for a non-Zappa deployed function:
+            Example for a non-Zappa deployed function:
 
-get_request_from_s3: bool = False,
-                 request_s3_bucket: str = '',
-                 request_s3_key: str = '',
-                 response_to_s3: str = ''
+    get_request_from_s3: bool = False,
+                     request_s3_bucket: str = '',
+                     request_s3_key: str = '',
+                     response_to_s3: str = ''
     """
+
     @wraps(func)
     def wrapped(event: dict, context: dict = None):
-        if event.get('response_id'):
-            return remotely_run(task_path=event.get('task_path'),
-                                capture_response=event.get('capture_response'),
-                                response_id=event.get('response_id'),
-                                args=event.get('args'),
-                                kwargs=event.get('kwargs'),
-                                get_request_from_s3=event.get('get_request_from_s3'),
-                                request_s3_bucket=event.get('request_s3_bucket'),
-                                request_s3_key=event.get('request_s3_key'),
-                                response_to_s3=event.get('response_to_s3')
-                                )
-        else:
-            return func(event, context)
+        try:
+            timing_thread = Thread(target=thread_timer, args=[context])
+            timing_thread.start()
+            if event.get("response_id"):
+                return remotely_run(
+                    task_path=event.get("task_path"),
+                    capture_response=event.get("capture_response"),
+                    response_id=event.get("response_id"),
+                    args=event.get("args"),
+                    kwargs=event.get("kwargs"),
+                    get_request_from_s3=event.get("get_request_from_s3"),
+                    request_s3_bucket=event.get("request_s3_bucket"),
+                    request_s3_key=event.get("request_s3_key"),
+                    response_to_s3=event.get("response_to_s3"),
+                )
+            else:
+                return func(event, context)
+        except TaskTimeoutError as te:
+            # Timing thread noticed that invocation time was almost at timeout limit for this lambda - log failure
+            error_msg = f'Lambda invocation with event {event} for function {func.__name__} timed out'
+            LOGGER.error(error_msg)
+            update_run_table_item(event.get('response_id'), 'TimeoutError', status='FAILED')
+            raise te
+        except TaskException as te:
+            # An unhandled exception was caught when running the actual function user requested be executed
+            error_msg = f'Unhandled exception occurred within lambda function code for function {func.__name__}. ' \
+                        f'Exception: {te.task_exception}'
+            LOGGER.error(error_msg)
+            update_run_table_item(event.get('response_id'), 'TaskException', status='FAILED')
+            raise te
+        except Exception as exc:
+            tb = traceback.format_exc()
+            LOGGER.error(f'Unhandled exception occurred while executing {func.__name__}, '
+                         f'most likely in wrapper handler code. Exception: {exc}')
+            LOGGER.error(f'{tb}')
+            response = {'UnhandledException': tb}
+            update_run_table_item(event.get('response_id'), response, status='FAILED')
     return wrapped
+
+
+def thread_timer(context):
+    sleep((context.get_remaining_time_in_millis() - 3000)/1000)
+    raise TaskTimeoutError
