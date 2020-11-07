@@ -49,3 +49,28 @@ def get_s3_response(response: dict) -> dict:
         .read()
         .decode("utf-8")
     )
+
+
+ASYNC_RESPONSE_TABLE = "phils_done_tasks"
+dynamo_client = boto3.client("dynamodb", region_name="us-west-2")
+aws_session = boto3.Session()
+lambda_client = aws_session.client("lambda", region_name="us-west-2")
+
+
+def get_async_response(response_id):
+    """
+    Get the response from the async table
+    """
+    response = dynamo_client.get_item(
+        TableName=ASYNC_RESPONSE_TABLE, Key={"id": {"S": str(response_id)}}
+    )
+    if "Item" not in response:
+        return None
+
+    return {
+        "status": response["Item"]["async_status"]["S"],
+        "response": json.loads(response["Item"]["async_response"]["S"]),
+    }
+
+
+LAMBDA_ASYNC_PAYLOAD_LIMIT = 256000

@@ -1,3 +1,4 @@
+import json
 import os
 from time import sleep
 from typing import Union, List, Dict, Tuple, Callable, Any, Optional
@@ -5,13 +6,15 @@ import uuid
 
 import boto3
 
+from exceptions import AsyncException
 from parallelagram.utils import LOGGER, prep_s3_object, get_s3_response
 from parallelagram.exceptions import (
     EcsTaskConfigurationError,
     UnableToDetermineContainerName,
     TaskTimeoutError,
 )
-from parallelagram.zappa_async_fork import run, get_async_response
+from remote_handler import get_func_task_path
+from utils import get_async_response, lambda_client, ASYNC_RESPONSE_TABLE, LAMBDA_ASYNC_PAYLOAD_LIMIT
 
 REQUEST_S3_BUCKET = os.getenv("REQUEST_S3_BUCKET", "sg-phil-testing")
 ecs_client = boto3.client("ecs")
@@ -172,7 +175,7 @@ class Lambdable:
                 self.error = True
 
 
-class ResponseCollector:
+class LambdableManager:
     def __init__(self, lambdables: List[Lambdable], fail_on_timeout: bool = False):
         self.lambdables = lambdables
         self.num_tasks_completed = 0
@@ -502,3 +505,144 @@ class TaskMap:
             self._task_map.update({remote_task: [(args, kwargs)]})
         else:
             self._task_map[remote_task].append((args, kwargs))
+
+
+def run(
+    func=None,
+    args: list = None,
+    kwargs: dict = None,
+    capture_response: bool = False,
+    remote_aws_lambda_function_name: str = None,
+    remote_aws_region: str = None,
+    task_path: str = "",
+    response_id: str = "",
+    get_request_from_s3: bool = False,
+    request_s3_bucket: str = "",
+    request_s3_key: str = "",
+    response_to_s3: bool = False,
+    **task_kwargs,
+):
+    """
+    Instead of decorating a function with @task, you can just run it directly.
+    If you were going to do func(*args, **kwargs), then you will call this:
+                request_s3_bucket: str = '',
+                 request_s3_key: str = '',
+                 response_to_s3: str = '',
+    import zappa.asynchronous.run
+    zappa.asynchronous.run(func, args, kwargs)
+
+    and other arguments are similar to @task
+    """
+    if args is None:
+        args = []
+    if kwargs is None:
+        kwargs = {}
+
+    lambda_function_name = remote_aws_lambda_function_name or os.environ.get(
+        "AWS_LAMBDA_FUNCTION_NAME"
+    )
+    aws_region = remote_aws_region or os.environ.get("AWS_REGION")
+
+    if not task_path:
+        task_path = get_func_task_path(func)
+
+    return LambdaAsyncResponse(
+        lambda_function_name=lambda_function_name,
+        aws_region=aws_region,
+        capture_response=capture_response,
+        response_id=response_id,
+        **task_kwargs,
+    ).send(
+        task_path=task_path,
+        args=args,
+        kwargs=kwargs,
+        get_request_from_s3=get_request_from_s3,
+        request_s3_bucket=request_s3_bucket,
+        request_s3_key=request_s3_key,
+        response_to_s3=response_to_s3,
+    )
+
+
+class LambdaAsyncResponse:
+    """
+    Base Response Dispatcher class
+    Can be used directly or subclassed if the method to send the message is changed.
+    """
+
+    def __init__(
+        self,
+        lambda_function_name: str = "",
+        aws_region: str = "",
+        capture_response: bool = False,
+        response_id: str = "",
+        **kwargs,
+    ):
+        """ """
+        if kwargs.get("boto_session"):
+            self.client = kwargs.get("boto_session").client("lambda")
+        else:  # pragma: no cover
+            self.client = lambda_client
+
+        self.lambda_function_name = lambda_function_name
+        self.aws_region = aws_region
+        if capture_response:
+            if ASYNC_RESPONSE_TABLE is None:
+                print(
+                    "Warning! Attempted to capture a response without "
+                    "async_response_table configured in settings (you won't "
+                    "capture async responses)."
+                )
+                capture_response = False
+                self.response_id = "MISCONFIGURED"
+
+            else:
+                if not response_id:
+                    self.response_id = str(uuid.uuid4())
+                else:
+                    self.response_id = response_id
+        else:
+            self.response_id = None
+
+        self.capture_response = capture_response
+
+    def send(
+        self,
+        task_path: str,
+        args: Union[tuple, list],
+        kwargs: dict,
+        get_request_from_s3: bool,
+        request_s3_bucket: str,
+        request_s3_key: str,
+        response_to_s3: bool = False,
+    ):
+        """
+        Create the message object and pass it to the actual sender.
+        """
+        message = {
+            "task_path": task_path,
+            "capture_response": self.capture_response,
+            "response_id": self.response_id,
+            "args": args,
+            "kwargs": kwargs,
+            "get_request_from_s3": get_request_from_s3,
+            "request_s3_bucket": request_s3_bucket,
+            "request_s3_key": request_s3_key,
+            "response_to_s3": response_to_s3,
+        }
+        self._send(message)
+        return self
+
+    def _send(self, message):
+        """
+        Given a message, directly invoke the lambda function for this task.
+        """
+        message["command"] = "zappa.asynchronous.route_lambda_task"
+        payload = json.dumps(message).encode("utf-8")
+        if len(payload) > LAMBDA_ASYNC_PAYLOAD_LIMIT:  # pragma: no cover
+            raise AsyncException("Payload too large for async Lambda call")
+        self.response = self.client.invoke(
+            FunctionName=self.lambda_function_name,
+            InvocationType="Event",  # makes the call async
+            Payload=payload,
+        )
+        self.sent = self.response.get("StatusCode", 0) == 202

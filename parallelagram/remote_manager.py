@@ -126,13 +126,8 @@ import boto3
 
 from parallelagram.utils import LOGGER
 from parallelagram.launchables import TaskMap, Lambdable
-from parallelagram.zappa_async_fork import (
-    get_async_response,
-    task,
-    get_func_task_path,
-    run,
-)
-from utils import prep_s3_object
+from launchables import run
+from utils import prep_s3_object, get_async_response
 
 s3_client = boto3.client("s3", region_name="us-west-2")
 ecs_client = boto3.client("ecs", region_name="us-west-2")
@@ -236,46 +231,17 @@ def manage(task_map: Union[TaskMap, List[Lambdable]]) -> Union[List[str], None]:
         LOGGER.warning("No tasks created")
 
 
-def run_lambdable_task(lambdable: Lambdable) -> str:
+def run_lambdable_task(lambdable: Lambdable):
     """Invoke a remote lambda function specified by the Lambdable object, returning the response_id attribute of a
     DynamoDB item to which the remote lambda function will write its return value to.
     """
-    import launchables
 
-    if not isinstance(lambdable, launchables.Lambdable):
+    if not isinstance(lambdable, Lambdable):
         raise Exception("Can't execute non-Lambdable tasks in lists yet")
 
-    # Generate response ID so that DynamoDB item should have same ID should be the same string as the S3 key
-    # that the request will be stored under
-    response_id = str(uuid.uuid4())
-    if lambdable.request_to_s3:
-        # Write args / kwargs to S3 so that lambda worker invoked by run() can retrieve them
-        request_key = prep_s3_object(
-            args=lambdable.args, kwargs=lambdable.kwargs, key=response_id
-        )
-        # Reset args and kwargs so they don't get sent over the wire as they've already been written to S3
-        # for retrieval by lambda worker
-        lambdable.args = []
-        lambdable.kwargs = {}
-    else:
-        request_key = ""
-
     # Invoke the remote Lambda function with the arguments provided by the previously defined Lambdable
-    response = run(
-        args=lambdable.args,
-        kwargs=lambdable.kwargs,
-        capture_response=lambdable.capture_response,
-        remote_aws_lambda_function_name=lambdable.remote_aws_lambda_func_name,
-        remote_aws_region=lambdable.remote_aws_region,
-        task_path=lambdable.func_path,
-        response_id=response_id,
-        get_request_from_s3=lambdable.request_to_s3,
-        request_s3_bucket=REQUEST_S3_BUCKET,
-        request_s3_key=request_key,
-        response_to_s3=lambdable.response_to_s3,
-    )
+    lambdable.run_task()
     # TODO: check response for error codes
-    return response_id
 
 
 def check_for_errors(response_datas: List[dict]):
@@ -401,40 +367,3 @@ def get_s3_response(response: dict) -> dict:
     return json.loads(
         s3.get_object(Bucket=s3_bucket, Key=s3_key)["Body"].read().decode("utf-8")
     )
-
-
-def remote_runner(*args, **kwargs) -> Callable:
-    func = args[0]
-    remote_aws_lambda_function_name = kwargs.pop(
-        "remote_aws_lambda_function_name", "remote-phil-dev"
-    )
-    remote_aws_region = kwargs.pop("remote_aws_region", "us-west-2")
-    capture_response = kwargs.pop("capture_response", True)
-
-    def func_wrapper(func):
-        task_path = get_func_task_path(func)
-        LOGGER.info(f"Using task path {task_path}")
-
-        @wraps(func)
-        @task(
-            remote_aws_lambda_function_name=remote_aws_lambda_function_name,
-            remote_aws_region=remote_aws_region,
-            capture_response=capture_response,
-            task_path=task_path,
-        )
-        def _run_task(*args, **kwargs):
-            try:
-                return func(*args, **kwargs)
-            except Exception as exc:
-                import traceback
-
-                logger = logging.getLogger()
-                tb = traceback.format_exc()
-                logger.error(f"Unhandled exception occurred: {exc}")
-                logger.error(f"{tb}")
-                return {"UnhandledException": tb}
-
-        update_wrapper(_run_task, func)
-        return _run_task
-
-    return func_wrapper(func)
