@@ -12,11 +12,13 @@ from parallelagram import Lambdable
 
 class MockAsyncResponse:
 
-    def __init__(self, response_id: str = ''):
+    def __init__(self, response_id: str = '', *args, **kwargs):
         if not response_id:
             response_id = uuid4()
         self.response_id = response_id
 
+    def send(self, *args, **kwargs):
+        pass
 
 def mock_run(response_id: str = '', *args, **kwargs):
     if not response_id:
@@ -59,11 +61,15 @@ class TestCheckForErrors:
         assert len(test_response) == 3
 
 
+def mock_invoke_success(*args, **kwargs):
+    return {'StatusCode': 202}
+
+
 class TestLaunchRemoteTasks:
 
-    @patch('parallelagram.zappa_async_fork.LambdaAsyncResponse.send')
-    def test_lambdable_list(self, mock_send):
-        mock_send.return_value = MockAsyncResponse()
+    def test_lambdable_list(self, monkeypatch):
+        from parallelagram.launchables import lambda_client
+        monkeypatch.setattr(lambda_client, 'invoke', mock_invoke_success)
 
         test_lambdable_captured = Lambdable(func_path='some.func.path',
                                             remote_aws_lambda_func_name='some-lambda-func',

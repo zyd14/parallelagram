@@ -5,7 +5,7 @@ from parallelagram.launchables import Lambdable
 
 class TestLambdableRunTask:
 
-    @patch('parallelagram.zappa_async_fork.LambdaAsyncResponse.send')
+    @patch('parallelagram.launchables.LambdaAsyncResponse.send')
     def test_no_request_to_s3(self, mock_send, mock_async_response):
         mock_send.return_value = mock_async_response
         test_lambdable = Lambdable(func_path='some.func.path',
@@ -16,7 +16,7 @@ class TestLambdableRunTask:
         assert len(test_lambdable.response_id) > 20 and isinstance(test_lambdable.response_id, str)
         assert mock_send.call_count == 1
 
-    @patch('parallelagram.zappa_async_fork.LambdaAsyncResponse.send')
+    @patch('parallelagram.launchables.LambdaAsyncResponse.send')
     @patch('parallelagram.utils.s3_client.put_object')
     def test_with_request_to_s3(self, mock_put, mock_send, mock_async_response):
         mock_put.return_value = None
