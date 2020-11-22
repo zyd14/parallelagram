@@ -5,15 +5,14 @@ import traceback
 import uuid
 from functools import wraps
 from time import time
-from types import FunctionType
-from typing import Union
+from typing import Union, Callable
 
-from exceptions import TaskException, TaskTimeoutError
-from utils import ASYNC_RESPONSE_TABLE, dynamo_client, LOGGER, s3_client, import_and_get_task
+from parallelagram.exceptions import TaskException, TaskTimeoutError
+from parallelagram.utils import ASYNC_RESPONSE_TABLE, dynamo_client, LOGGER, s3_client, import_and_get_task
 
 
 def remotely_run(
-    func_to_execute: FunctionType,
+    func_to_execute: Callable,
     capture_response: bool = True,
     response_id: str = "",
     get_request_from_s3: bool = False,
@@ -29,6 +28,11 @@ def remotely_run(
     will be used to track the status of the function being executed, as well as store the function's output for later
     retrieval by the remote invoker.
     """
+    if args is None:
+        args = []
+    if kwargs is None:
+        kwargs = {}
+
     if get_request_from_s3:
         # Retrieve request from S3 - should have been written by remote_manager.manage() in caller code
         request = json.loads(

@@ -1,20 +1,19 @@
-import json
+import inspect
 import os
 from time import sleep
-from typing import Union, List, Dict, Tuple, Callable, Any, Optional
+import types
+from typing import Union, List, Dict, Callable, Optional
 import uuid
 
 import boto3
 
-from exceptions import AsyncException
 from parallelagram.utils import LOGGER, prep_s3_object, get_s3_response
 from parallelagram.exceptions import (
     EcsTaskConfigurationError,
     UnableToDetermineContainerName,
     TaskTimeoutError,
 )
-from utils import get_async_response, lambda_client, ASYNC_RESPONSE_TABLE, LAMBDA_ASYNC_PAYLOAD_LIMIT, \
-    get_func_task_path
+from parallelagram.remote_runner import run, get_async_response
 
 REQUEST_S3_BUCKET = os.getenv("REQUEST_S3_BUCKET", "sg-phil-testing")
 ecs_client = boto3.client("ecs")
@@ -23,7 +22,7 @@ ecs_client = boto3.client("ecs")
 class Lambdable:
     def __init__(
         self,
-        func_path: str,
+        func_path: Union[str, types.FunctionType],
         remote_aws_lambda_func_name: str,
         args: Union[tuple, list] = None,
         kwargs: dict = None,
@@ -31,6 +30,8 @@ class Lambdable:
         remote_aws_region: str = "us-west-2",
         request_to_s3: bool = False,
         response_to_s3: bool = False,
+        result_id: int = None,
+        login_info: Dict[str, str] = None
     ):
         """
         Args:
@@ -54,6 +55,8 @@ class Lambdable:
                 returning it to the caller. Useful when remote lambda responses exceed 400Kb, the AWS-imposed limit
                 on DynamoDB items. Requires that capture_response = True.
         """
+        if isinstance(func_path, Callable):
+            func_path = '.'.join([inspect.getmodule(func_path).__name__, func_path.__name__])
         self.func_path = func_path
         if args is None:
             args = []
@@ -76,6 +79,12 @@ class Lambdable:
         self.request_to_s3 = request_to_s3
         self.response_to_s3 = response_to_s3
         self.response_id = ""  # type: str
+        if not result_id:
+            result_id = os.getenv('RESULT_ID')
+        if not login_info:
+            login_info = os.getenv('LOGIN_INFO')
+        self.result_id = result_id
+        self.login_info = login_info
         self._response = None  # type: Optional[Union[dict, str]]
         self._response_status = None  # type: Optional[str]
         self.invocation_response = None
@@ -121,6 +130,8 @@ class Lambdable:
             request_s3_bucket=REQUEST_S3_BUCKET,
             request_s3_key=request_key,
             response_to_s3=self.response_to_s3,
+            result_id=self.result_id,
+            login_info=self.login_info
         )
         self.invocation_response = response
         self.response_id = response_id
@@ -144,7 +155,7 @@ class Lambdable:
             else:
                 if "s3_response" in dynamo_response_item.get(
                     "response", {}
-                ) and dynamo_response_item.get("response").get("s3_response"):
+                ) and dynamo_response_item.get("response", {}).get("s3_response"):
                     # Get response from S3
                     s3_response = get_s3_response(dynamo_response_item.get("response"))
                     if 'remote_response' in s3_response:
@@ -159,6 +170,7 @@ class Lambdable:
                     return True
 
     def set_response(self, response_data, status: str, check_for_error: bool = True):
+        """ Associate a response retrieved from DynamoDB with the Lambdable instance. """
         self._response = response_data
         self._response_status = status
         if check_for_error:
@@ -171,11 +183,14 @@ class Lambdable:
                 self._response == "N/A"
                 or self._response_status and self._response_status.lower() == "failed"
                 or "UnhandledException" in self._response
+                or 'TaskException' in self._response
+                or 'TimeoutError' in self._response
             ):
                 self.error = True
+                LOGGER.error(f'Error detected for response ID {self.response_id}: {self._response}')
 
 
-class LambdableManager:
+class ResponseCollector:
     def __init__(self, lambdables: List[Lambdable], fail_on_timeout: bool = False):
         self.lambdables = lambdables
         self.num_tasks_completed = 0
@@ -203,27 +218,26 @@ class LambdableManager:
         """
 
         total_wait = 0
-        num_tasks = len(self.lambdables)
+        num_tasks = len([l for l in self.lambdables if l.capture_response])
         num_responses_collected = 0
 
         # While there are still response_ids to collect and time hasn't maxed out, keep trying to get response data from
         # DynamoDB
         while num_responses_collected < num_tasks and total_wait < self.max_total_wait:
             for task in self.lambdables:
-                if not task.has_response():
-                    got_response = task.try_getting_response()
-                    if got_response:
-                        num_responses_collected += 1
+                if task.capture_response:
+                    if not task.has_response():
+                        got_response = task.try_getting_response()
+                        if got_response:
+                            num_responses_collected += 1
+                    if num_responses_collected == num_tasks:
+                        break
 
             # Not all responses collected yet, sleep for a user-specified amount of time before trying again
             if num_responses_collected != num_tasks:
                 LOGGER.info("Didn't get all responses, going to sleep for a bit")
                 sleep(self.loop_wait)
                 total_wait += self.loop_wait
-            else:
-                # All responses gathered, return them to caller
-                LOGGER.info("Got all responses")
-                return
 
         if num_responses_collected == num_tasks:
             LOGGER.info("Got all responses")
@@ -241,7 +255,7 @@ class LambdableManager:
                 "Timed out, returning what responses were collected but data is likely to be incomplete"
             )
         self.error_tasks = self.aggregate_errors(
-            self.lambdables, error_null_responses=True
+            self.lambdables, error_on_null_responses=True
         )
         if self.error_tasks:
             LOGGER.error(
@@ -252,27 +266,37 @@ class LambdableManager:
     def aggregate_errors(
         lambdable_list: List[Lambdable],
         error_tasks: dict = None,
-        error_null_responses: bool = False,
+        error_on_null_responses: bool = False,
     ):
+        """ Collect and return errors from remote Lambda invocation responses."""
         if not error_tasks:
             error_tasks = {}
 
         for task in lambdable_list:
             if task.error:
                 error_tasks.update({task.response_id: task.get_response()})
-            if error_null_responses:
+            if error_on_null_responses:
                 if not task.get_response():
                     error_tasks.update({task.response_id: task.get_response()})
         return error_tasks
 
     def retrieve_responses(self, return_null_responses: bool = True) -> List[Union[str, dict]]:
+        """ Return responses collected in Lambdable objects. return_null_responses=True indicates to return None for
+            Lambdables that have not received a response from their remote invocation.
+        """
         if return_null_responses:
-            return [l.get_response() for l in self.lambdables]
+            return [l.get_response() for l in self.lambdables if l.capture_response]
         else:
-            return [l.get_response() for l in self.lambdables if l.get_response()]
+            return [l.get_response() for l in self.lambdables if l.get_response() and l.capture_response]
+
+    def has_null_responses(self) -> bool:
+        """ Return boolean indicating whether there are any Lambdables associated with this instance that have not
+            received a response
+        """
+        return all([l.has_response() for l in self.lambdables])
 
 
-class EcsTask:
+class EcsTask:  # pragma: no cover
     """Class used to launch a single-container task from an existing Fargate task
     TODO: support multiple container tasks
     """
@@ -465,184 +489,3 @@ class EcsTask:
             run_task_request.update({"networkConfiguration": network_configuration})
 
         return run_task_request
-
-
-class TaskMap:
-    """ Object to hold tasks to be executed on a remote lambda invocation"""
-
-    def __init__(self):
-        self._task_map = (
-            {}
-        )  # type: Dict[Callable, List[Tuple[List[Any], Dict[str, Any]]]]
-
-    def __iter__(self) -> Tuple[Callable, Tuple[list, dict]]:
-        for t in self._task_map:
-            for arg_set in self._task_map[t]:
-                yield t, arg_set
-
-    def __len__(self):
-        return len(self._task_map.keys())
-
-    def add_task(
-        self,
-        remote_task: Union[Callable, str],
-        args: List[Any] = None,
-        kwargs: Dict[str, Any] = None,
-    ):
-        """
-
-        Args:
-            remote_task: function to be executed remotely
-            args: list of positional arguments to be fed to task function
-            kwargs: dictionary of keyword arguments to be fed to task function
-        """
-        if args is None:
-            args = []
-        if kwargs is None:
-            kwargs = {}
-
-        if remote_task not in self._task_map:
-            self._task_map.update({remote_task: [(args, kwargs)]})
-        else:
-            self._task_map[remote_task].append((args, kwargs))
-
-
-def run(
-    func=None,
-    args: list = None,
-    kwargs: dict = None,
-    capture_response: bool = False,
-    remote_aws_lambda_function_name: str = None,
-    remote_aws_region: str = None,
-    task_path: str = "",
-    response_id: str = "",
-    get_request_from_s3: bool = False,
-    request_s3_bucket: str = "",
-    request_s3_key: str = "",
-    response_to_s3: bool = False,
-    **task_kwargs,
-):
-    """
-    Instead of decorating a function with @task, you can just run it directly.
-    If you were going to do func(*args, **kwargs), then you will call this:
-                request_s3_bucket: str = '',
-                 request_s3_key: str = '',
-                 response_to_s3: str = '',
-    import zappa.asynchronous.run
-    zappa.asynchronous.run(func, args, kwargs)
-
-    and other arguments are similar to @task
-    """
-    if args is None:
-        args = []
-    if kwargs is None:
-        kwargs = {}
-
-    lambda_function_name = remote_aws_lambda_function_name or os.environ.get(
-        "AWS_LAMBDA_FUNCTION_NAME"
-    )
-    aws_region = remote_aws_region or os.environ.get("AWS_REGION")
-
-    if not task_path:
-        task_path = get_func_task_path(func)
-
-    return LambdaAsyncResponse(
-        lambda_function_name=lambda_function_name,
-        aws_region=aws_region,
-        capture_response=capture_response,
-        response_id=response_id,
-        **task_kwargs,
-    ).send(
-        task_path=task_path,
-        args=args,
-        kwargs=kwargs,
-        get_request_from_s3=get_request_from_s3,
-        request_s3_bucket=request_s3_bucket,
-        request_s3_key=request_s3_key,
-        response_to_s3=response_to_s3,
-    )
-
-
-class LambdaAsyncResponse:
-    """
-    Base Response Dispatcher class
-    Can be used directly or subclassed if the method to send the message is changed.
-    """
-
-    def __init__(
-        self,
-        lambda_function_name: str = "",
-        aws_region: str = "",
-        capture_response: bool = False,
-        response_id: str = "",
-        **kwargs,
-    ):
-        """ """
-        if kwargs.get("boto_session"):
-            self.client = kwargs.get("boto_session").client("lambda")
-        else:  # pragma: no cover
-            self.client = lambda_client
-
-        self.lambda_function_name = lambda_function_name
-        self.aws_region = aws_region
-        if capture_response:
-            if ASYNC_RESPONSE_TABLE is None:
-                print(
-                    "Warning! Attempted to capture a response without "
-                    "async_response_table configured in settings (you won't "
-                    "capture async responses)."
-                )
-                capture_response = False
-                self.response_id = "MISCONFIGURED"
-
-            else:
-                if not response_id:
-                    self.response_id = str(uuid.uuid4())
-                else:
-                    self.response_id = response_id
-        else:
-            self.response_id = None
-
-        self.capture_response = capture_response
-
-    def send(
-        self,
-        task_path: str,
-        args: Union[tuple, list],
-        kwargs: dict,
-        get_request_from_s3: bool,
-        request_s3_bucket: str,
-        request_s3_key: str,
-        response_to_s3: bool = False,
-    ):
-        """
-        Create the message object and pass it to the actual sender.
-        """
-        message = {
-            "task_path": task_path,
-            "capture_response": self.capture_response,
-            "response_id": self.response_id,
-            "args": args,
-            "kwargs": kwargs,
-            "get_request_from_s3": get_request_from_s3,
-            "request_s3_bucket": request_s3_bucket,
-            "request_s3_key": request_s3_key,
-            "response_to_s3": response_to_s3,
-        }
-        self._send(message)
-        return self
-
-    def _send(self, message):
-        """
-        Given a message, directly invoke the lambda function for this task.
-        """
-        message["command"] = "zappa.asynchronous.route_lambda_task"
-        payload = json.dumps(message).encode("utf-8")
-        if len(payload) > LAMBDA_ASYNC_PAYLOAD_LIMIT:  # pragma: no cover
-            raise AsyncException("Payload too large for async Lambda call")
-        self.response = self.client.invoke(
-            FunctionName=self.lambda_function_name,
-            InvocationType="Event",  # makes the call async
-            Payload=payload,
-        )
-        self.sent = self.response.get("StatusCode", 0) == 202

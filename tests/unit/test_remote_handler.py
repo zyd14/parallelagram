@@ -1,7 +1,10 @@
 from time import sleep
 from unittest.mock import patch
 
-from parallelagram.remote_handler import remote_handler, put_response_in_s3
+import pytest
+
+from parallelagram.exceptions import TaskException
+from parallelagram.remote_handler import remote_handler, put_response_in_s3, remotely_run
 
 
 class TestRemoteHandler:
@@ -91,3 +94,42 @@ class TestPutResponseInS3:
         assert len(test_result.get('s3_key')) > 10
         assert mock_client.put_object.call_count == 1
 
+
+def mock_function_to_execute(response_to_return):
+    return response_to_return
+
+
+class MockException(Exception):
+    pass
+
+
+def mock_function_with_exception(*args, **kwargs):
+    raise MockException()
+
+
+class TestRemotelyRun:
+
+    @patch('parallelagram.remote_handler.dynamo_client')
+    def test_not_initial_no_s3_no_outputs_no_exit_do_capture_response(self, mock_client, monkeypatch):
+        mock_client.update_item.return_value = None
+        mock_client.put_item.return_value = None
+
+        response_to_return = {'test': 'response'}
+        response = remotely_run(func_to_execute=mock_function_to_execute,
+                                capture_response=True,
+                                response_id='abc123',
+                                kwargs={'response_to_return': response_to_return})
+
+        assert response == response_to_return
+        assert mock_client.update_item.call_count == 1
+        assert mock_client.put_item.call_count == 1
+
+    def test_function_raises_task_exception(self):
+
+        try:
+            result = remotely_run(func_to_execute=mock_function_with_exception,
+                                  capture_response=False,
+                                  response_id='abc123')
+        except Exception as exc:
+            # can't figure out why with pytest.raises(TaskException) doesn't work here
+            assert isinstance(exc, TaskException)

@@ -19,6 +19,7 @@ class TestImportAndGetTask:
         with pytest.raises(NoSuchFunctionFound):
             import_and_get_task('parallelagram.remote_handler.nonexistent_function')
 
+
 class TestGetS3Object:
 
     @patch('parallelagram.utils.s3_client')
