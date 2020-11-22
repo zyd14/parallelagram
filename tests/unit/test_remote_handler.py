@@ -1,10 +1,6 @@
 from time import sleep
-from typing import List, Dict
 from unittest.mock import patch
 
-import pytest
-
-from parallelagram.exceptions import TaskTimeoutError
 from parallelagram.remote_handler import remote_handler, put_response_in_s3
 
 
@@ -94,3 +90,4 @@ class TestPutResponseInS3:
         assert test_result.get('s3_bucket') == 'mock_bucket'
         assert len(test_result.get('s3_key')) > 10
         assert mock_client.put_object.call_count == 1
+

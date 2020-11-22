@@ -1,3 +1,5 @@
+import importlib
+import inspect
 import json
 import logging
 import os
@@ -5,6 +7,8 @@ from typing import Union
 import uuid
 
 import boto3
+
+from parallelagram.exceptions import NoSuchFunctionFound
 
 s3_client = boto3.client("s3")
 REQUEST_S3_BUCKET = os.getenv("REQUEST_S3_BUCKET", "sg-phil-testing")
@@ -44,11 +48,12 @@ def get_s3_response(response: dict) -> dict:
     s3_bucket = response.get("s3_bucket")
     s3_key = response.get("s3_key")
     LOGGER.info(f"Retrieving data from s3://{s3_bucket}/{s3_key}")
-    return json.loads(
-        s3_client.get_object(Bucket=s3_bucket, Key=s3_key)["Body"]
-        .read()
-        .decode("utf-8")
-    )
+
+    s3_object = s3_client.get_object(Bucket=s3_bucket, Key=s3_key)["Body"].read().decode("utf-8")
+    try:
+        return json.loads(s3_object)
+    except json.decoder.JSONDecodeError:
+        return s3_object
 
 
 ASYNC_RESPONSE_TABLE = "phils_done_tasks"
@@ -74,3 +79,26 @@ def get_async_response(response_id):
 
 
 LAMBDA_ASYNC_PAYLOAD_LIMIT = 256000
+
+
+def import_and_get_task(task_path):
+    """ Given a modular path to a function, import that module and return the function."""
+    module, function = task_path.rsplit('.', 1)
+    app_module = importlib.import_module(module)
+    try:
+        # Return function from module
+        return getattr(app_module, function)
+    except AttributeError as ae:
+        raise NoSuchFunctionFound(task_path=task_path,
+                                  exc_string=ae.args[0])
+
+
+def get_func_task_path(func):
+    """
+    Format the modular task path for a function via inspection.
+    """
+    module_path = inspect.getmodule(func).__name__
+    task_path = "{module_path}.{func_name}".format(
+        module_path=module_path, func_name=func.__name__
+    )
+    return task_path

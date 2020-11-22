@@ -13,8 +13,8 @@ from parallelagram.exceptions import (
     UnableToDetermineContainerName,
     TaskTimeoutError,
 )
-from remote_handler import get_func_task_path
-from utils import get_async_response, lambda_client, ASYNC_RESPONSE_TABLE, LAMBDA_ASYNC_PAYLOAD_LIMIT
+from utils import get_async_response, lambda_client, ASYNC_RESPONSE_TABLE, LAMBDA_ASYNC_PAYLOAD_LIMIT, \
+    get_func_task_path
 
 REQUEST_S3_BUCKET = os.getenv("REQUEST_S3_BUCKET", "sg-phil-testing")
 ecs_client = boto3.client("ecs")
