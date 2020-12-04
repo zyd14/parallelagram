@@ -40,6 +40,7 @@ class TestRemoteHandler:
         def mock_test_function(*args, **kwargs):
             async def mock_sleep():
                 await asyncio.sleep(5)
+
             asyncio.get_event_loop().run_until_complete(asyncio.gather(mock_sleep()))
             return 'winner winner chicken dinner'
 
@@ -125,8 +126,8 @@ class TestRemotelyRun:
     def test_function_raises_task_exception(self):
 
         try:
-            result = remotely_run(func_to_execute=mock_function_with_exception,
-                                  capture_response=False,
-                                  response_id='abc123')
+            remotely_run(func_to_execute=mock_function_with_exception,
+                         capture_response=False,
+                         response_id='abc123')
         except Exception as exc:
             assert isinstance(exc, TaskException)
