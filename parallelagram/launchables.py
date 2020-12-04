@@ -7,6 +7,7 @@ import uuid
 
 import boto3
 
+from parallelagram.config import AWS_REGION
 from parallelagram.utils import LOGGER, prep_s3_object, get_s3_response
 from parallelagram.exceptions import (
     EcsTaskConfigurationError,
@@ -16,7 +17,7 @@ from parallelagram.exceptions import (
 from parallelagram.remote_runner import run, get_async_response
 
 REQUEST_S3_BUCKET = os.getenv("REQUEST_S3_BUCKET", "sg-phil-testing")
-ecs_client = boto3.client("ecs")
+ecs_client = boto3.client("ecs", region_name=AWS_REGION)
 
 
 class Lambdable:

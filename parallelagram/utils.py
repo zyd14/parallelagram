@@ -2,16 +2,18 @@ import importlib
 import inspect
 import json
 import logging
-import os
 from typing import Union
 import uuid
 
 import boto3
 
+from parallelagram.config import ASYNC_RESPONSE_TABLE, AWS_REGION, REQUEST_S3_BUCKET
 from parallelagram.exceptions import NoSuchFunctionFound
 
+aws_session = boto3.Session()
 s3_client = boto3.client("s3")
-REQUEST_S3_BUCKET = os.getenv("REQUEST_S3_BUCKET", "sg-phil-testing")
+dynamo_client = boto3.client("dynamodb", region_name=AWS_REGION)
+lambda_client = aws_session.client("lambda", region_name=AWS_REGION)
 
 
 def create_logger() -> logging.Logger:
@@ -54,12 +56,6 @@ def get_s3_response(response: dict) -> dict:
         return json.loads(s3_object)
     except json.decoder.JSONDecodeError:
         return s3_object
-
-
-ASYNC_RESPONSE_TABLE = "phils_done_tasks"
-dynamo_client = boto3.client("dynamodb", region_name="us-west-2")
-aws_session = boto3.Session()
-lambda_client = aws_session.client("lambda", region_name="us-west-2")
 
 
 def get_async_response(response_id):
