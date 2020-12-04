@@ -90,10 +90,9 @@ import os
 import uuid
 from typing import Dict, Optional, Union
 
-from config import ASYNC_RESPONSE_TABLE, LAMBDA_ASYNC_PAYLOAD_LIMIT
-from exceptions import AsyncException
+from parallelagram.exceptions import AsyncException
 
-from parallelagram.config import ASYNC_RESPONSE_TABLE
+from parallelagram.config import ASYNC_RESPONSE_TABLE, LAMBDA_ASYNC_PAYLOAD_LIMIT
 from parallelagram.utils import dynamo_client
 from utils import lambda_client
 
@@ -135,7 +134,7 @@ class LambdaAsyncResponse:
                     self.response_id = response_id
         else:
             self.response_id = None
-
+        self.lambda_invoke_response = None
         self.capture_response = capture_response
 
     def send(self,
@@ -176,13 +175,13 @@ class LambdaAsyncResponse:
         payload = json.dumps(message).encode('utf-8')
         if len(payload) > LAMBDA_ASYNC_PAYLOAD_LIMIT:  # pragma: no cover
             raise AsyncException("Payload too large for async Lambda call")
-        self.response = self.client.invoke(
+        self.lambda_invoke_response = self.client.invoke(
                                     FunctionName=self.lambda_function_name,
                                     InvocationType='Event',  # makes the call async
                                     Payload=payload
                                 )
         # TODO: handle non-202 errors
-        self.sent = (self.response.get('StatusCode', 0) == 202)
+        self.sent = (self.lambda_invoke_response.get('StatusCode', 0) == 202)
 
 
 def run(func=None,

@@ -1,6 +1,4 @@
-import json
 import os
-from typing import Dict
 
 from parallelagram.exceptions import ConfigurationException
 

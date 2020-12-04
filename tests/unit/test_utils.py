@@ -12,7 +12,7 @@ class TestImportAndGetTask:
 
     def test_nominal(self):
         function = import_and_get_task('parallelagram.remote_handler.put_response_in_s3')
-        assert function == put_response_in_s3
+        assert function is put_response_in_s3
 
     def test_function_doesnt_exist(self):
 

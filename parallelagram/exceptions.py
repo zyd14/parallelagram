@@ -17,6 +17,7 @@ class TaskTimeoutError(Exception):
 
 class TaskException(Exception):
     def __init__(self, task_exception: Exception, tb, *args, **kwargs):
+        super(Exception, task_exception).__init__(*args)
         self.task_exception = task_exception
         self.tb = tb
 
@@ -28,6 +29,7 @@ class ConfigurationException(Exception):
 class AsyncException(Exception):
     """ Simple exception class for async tasks. """
     pass
+
 
 class NoSuchFunctionFound(Exception):
     """ Exception notifying that user provided a modular path to a function that does not exist"""

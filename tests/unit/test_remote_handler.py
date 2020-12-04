@@ -1,8 +1,6 @@
 from time import sleep
 from unittest.mock import patch
 
-import pytest
-
 from parallelagram.exceptions import TaskException
 from parallelagram.remote_handler import remote_handler, put_response_in_s3, remotely_run
 
@@ -131,5 +129,4 @@ class TestRemotelyRun:
                                   capture_response=False,
                                   response_id='abc123')
         except Exception as exc:
-            # can't figure out why with pytest.raises(TaskException) doesn't work here
             assert isinstance(exc, TaskException)

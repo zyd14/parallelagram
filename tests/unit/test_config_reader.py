@@ -41,6 +41,6 @@ class TestReadConfig:
         assert data.lambdas[0].s3_request_bucket == lambdas.get('s3_request_bucket')
         assert data.lambdas[0].s3_response_bucket == lambdas.get('s3_response_bucket')
 
-    def test_throws_validation_error(self, mock_bad_config):
+    def test_throws_validation_error(self):
         with pytest.raises(ValidationError):
             read_config(self.test_bad_config)

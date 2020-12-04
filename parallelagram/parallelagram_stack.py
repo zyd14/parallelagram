@@ -2,7 +2,6 @@ import os
 from typing import List, Type
 
 from aws_cdk import (
-    aws_iam as iam,
     aws_lambda as lambda_,
     aws_dynamodb as dynamodb,
     core,

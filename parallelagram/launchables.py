@@ -293,7 +293,7 @@ class ResponseCollector:
         """ Return boolean indicating whether there are any Lambdables associated with this instance that have not
             received a response
         """
-        return all([l.has_response() for l in self.lambdables])
+        return all((l.has_response() for l in self.lambdables))
 
 
 class EcsTask:  # pragma: no cover
@@ -375,9 +375,9 @@ class EcsTask:  # pragma: no cover
         """ Check that values provided for task meet AWS-imposed requirements for running a task."""
         task_errors = []
         if self.task_cpu and self.task_cpu % 128 != 0:
-            task_errors.append(f"task_cpu must be a multiple of 128")
+            task_errors.append("task_cpu must be a multiple of 128")
         if self.container_cpu and self.container_cpu % 128 != 0:
-            task_errors.append(f"container_cpu must be a multiple of 128")
+            task_errors.append("container_cpu must be a multiple of 128")
         if self.launch_type == "FARGATE":
             valid_memory_values = {
                 256: [512, 1024, 2048],
@@ -407,13 +407,13 @@ class EcsTask:  # pragma: no cover
                 )
 
         if self.launch_type not in ["FARGATE", "EC2"]:
-            task_errors.append(f"Task launch_type must be EC2 or FARGATE")
+            task_errors.append("Task launch_type must be EC2 or FARGATE")
 
         network_mode = self._aws_task_description.get("networkMode")
         if network_mode == "awsvpc" and (not self.subnets or not self.security_groups):
             task_errors.append(
-                f"Tasks which have been defined with awsvpc networkMode must include at least one "
-                f"security group and at least one subnet."
+                "Tasks which have been defined with awsvpc networkMode must include at least one "
+                "security group and at least one subnet."
             )
 
         if task_errors:

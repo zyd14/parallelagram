@@ -115,7 +115,7 @@ def remote_handler(func):
             except asyncio.exceptions.CancelledError:
                 raise TaskTimeoutError()
             return result
-        except TaskTimeoutError as task_timeout_error:
+        except TaskTimeoutError:
             # Timing thread noticed that invocation time was almost at timeout limit for this lambda - log failure
             error_msg = f'Lambda invocation with event {event} for function {func.__name__} timed out'
             handle_exception(error_msg, event.get('response_id'), 'TaskTimeoutError')
