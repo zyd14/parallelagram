@@ -19,12 +19,12 @@ setuptools.setup(
     packages=setuptools.find_packages(where="parallelagram"),
 
     install_requires=[
-        "aws-cdk.core==1.68.0",
-        "aws-cdk.aws_iam==1.68.0",
-        "aws-cdk.aws_sqs==1.68.0",
-        "aws-cdk.aws_sns==1.68.0",
-        "aws-cdk.aws_sns_subscriptions==1.68.0",
-        "aws-cdk.aws_s3==1.68.0",
+        "aws-cdk.core==1.71.0",
+        "aws-cdk.aws_iam==1.71.0",
+        "aws-cdk.aws_sqs==1.71.0",
+        "aws-cdk.aws_sns==1.71.0",
+        "aws-cdk.aws_sns_subscriptions==1.71.0",
+        "aws-cdk.aws_s3==1.71.0",
         "boto3"
     ],
 
