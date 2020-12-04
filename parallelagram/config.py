@@ -11,4 +11,3 @@ REQUEST_S3_BUCKET = os.getenv("REQUEST_S3_BUCKET", "sg-phil-testing")
 if not SNS_TOPIC:
     config_error_msg = 'No SNS topic configured for sending result updates'
     raise ConfigurationException(config_error_msg)
-

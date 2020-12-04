@@ -185,7 +185,6 @@ async def thread_timer(context):
 
 
 def update_run_table_item(response_id: str, response: Union[dict, str], status: str):
-    # TODO: Add exception to item if status=FAILED
     if isinstance(response, dict):
         out_response = json.dumps(response)
     else:

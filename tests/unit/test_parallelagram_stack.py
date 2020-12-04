@@ -16,4 +16,3 @@ def get_template():
 def test_sqs_queue_created():
     template = get_template()
     assert "AWS::DynamoDB::Table" in template
-

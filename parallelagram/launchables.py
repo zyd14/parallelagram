@@ -235,26 +235,12 @@ class ResponseCollector:
                         break
 
             # Not all responses collected yet, sleep for a user-specified amount of time before trying again
-            if num_responses_collected != num_tasks:
-                LOGGER.info("Didn't get all responses, going to sleep for a bit")
-                sleep(self.loop_wait)
-                total_wait += self.loop_wait
+            self.wait_if_not_done(num_responses_collected, num_tasks, total_wait)
 
         if num_responses_collected == num_tasks:
             LOGGER.info("Got all responses")
         elif total_wait >= self.max_total_wait:
-            if self.fail_on_timeout:
-                error_msg = (
-                    "gather_responses timed out while waiting for responses from remote tasks. If the remote "
-                    "task had not finished yet you may need to increase the max_total_wait. It is also possible"
-                    "that the remote task itself timed out, particularly if it was a Lambda invocation."
-                )
-                LOGGER.error(error_msg)
-                raise TaskTimeoutError(error_msg)
-
-            LOGGER.warning(
-                "Timed out, returning what responses were collected but data is likely to be incomplete"
-            )
+            self.handle_timeout()
         self.error_tasks = self.aggregate_errors(
             self.lambdables, error_on_null_responses=True
         )
@@ -262,6 +248,27 @@ class ResponseCollector:
             LOGGER.error(
                 f"Found error responses in the following tasks: {list(self.error_tasks.keys())}"
             )
+
+    def handle_timeout(self):
+        if self.fail_on_timeout:
+            error_msg = (
+                "gather_responses timed out while waiting for responses from remote tasks. If the remote "
+                "task had not finished yet you may need to increase the max_total_wait. It is also possible"
+                "that the remote task itself timed out, particularly if it was a Lambda invocation."
+            )
+            LOGGER.error(error_msg)
+            raise TaskTimeoutError(error_msg)
+
+        LOGGER.warning(
+            "Timed out, returning what responses were collected but data is likely to be incomplete"
+        )
+
+    def wait_if_not_done(self, num_responses_collected: int, num_tasks: int, total_wait: int) -> int:
+        if num_responses_collected != num_tasks:
+            LOGGER.info("Didn't get all responses, going to sleep for a bit")
+            sleep(self.loop_wait)
+            total_wait += self.loop_wait
+        return total_wait
 
     @staticmethod
     def aggregate_errors(
