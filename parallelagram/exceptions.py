@@ -17,7 +17,7 @@ class TaskTimeoutError(Exception):
 
 class TaskException(Exception):
     def __init__(self, task_exception: Exception, tb, *args, **kwargs):
-        super(Exception, task_exception).__init__(*args)
+        super(TaskException).__init__(*args)
         self.task_exception = task_exception
         self.tb = tb
 
