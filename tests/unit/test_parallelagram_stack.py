@@ -3,7 +3,7 @@ import json
 import pytest
 
 from aws_cdk import core
-from parallelagram.parallelagram_stack import LambdaStack
+from stack.parallelagram_stack import LambdaStack
 
 
 def get_template():
