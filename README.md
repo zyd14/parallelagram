@@ -23,8 +23,16 @@ library attempts to tackle some of them in a pure Python package (but please do 
 ## Who might want to use this?  
 If you have a task which has embarrassingly parallel properties and an AWS account, you may consider using this library. 
 It can be launched from a remote EC2 instance, an ECS container, your workstation, or even another Lambda function (really anywhere) 
-in order to gain access to hundreds of CPUs in a few seconds.  
+in order to gain access to hundreds or thousands of CPUs in a few seconds. Please do see the *Caveats and pitfalls* below 
+prior to using this library though; using this library can incur account charges by AWS and can also interfere with other 
+services in your account by using up account-level quotas.  
+
+## Usage  
 
 ## Caveats and pitfalls  
-- account limits; CreateLogStream quotas, Concurrent Lambda quotas
-- timeouts 
+With great power comes great responsibility. When using this library it is important to be aware of some side-effects that 
+can occur as a result of provisioning large amounts of concurrent Lambda functions;
+### Account limits
+    - Concurrent Lambda Invocation quotas: the most obvious quota you may quickly bump up against is the concurrent Lambda invocation quota. When you attempt to provision more concurrent Lambdas than your account settings allow, AWS will queue up the remaining asynchronous invocations for you for up to 6 hours <AWS Lambda async documentation>. This is great, and means that even if you blow your account concurrency limits your Lambdas will still get executed eventually. The downside is that once you hit your concurrency limit any other asynchronous Lambda invocations (message / event - driven) will be queued up behind your parallelagram-provisioned Lambdas, and any synchronous Lambda invocations (direct invocation or API Gateway provisioned) will fail. The solution is to set a reserved concurrency on your Lambda function <insert AWS documentation> less than your total account concurrency, allowing other Lambda functions to execute with the rest of your account-wide concurrency.   
+    - CreateLogStream quotas: an interesting side effect of provisioning hundreds or thousands of Lambda instances concurrently is that each one attempts to create its own log stream, which drains on the account-wide CreateLogStream quota. The default CreateLogStream quota is 50/s, but this is another quota AWS can adjust for you on request. When this quota is met you may see failures with other services which attempt to create log streams, such as ECS and Batch. In addition to having AWS increase the default quota, you can also create an IAM role for the parallelagram-provisioned Lambda to use which doesn't have CreateLogStream privileges (although this is obviously not ideal as you won't have any logs from your Lambda invocations).  
+    - timeouts 
