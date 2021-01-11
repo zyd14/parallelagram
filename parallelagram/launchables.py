@@ -31,8 +31,6 @@ class Lambdable:
         remote_aws_region: str = "us-west-2",
         request_to_s3: bool = False,
         response_to_s3: bool = False,
-        result_id: int = None,
-        login_info: Dict[str, str] = None
     ):
         """
         Args:
@@ -80,12 +78,6 @@ class Lambdable:
         self.request_to_s3 = request_to_s3
         self.response_to_s3 = response_to_s3
         self.response_id = ""  # type: str
-        if not result_id:
-            result_id = os.getenv('RESULT_ID')
-        if not login_info:
-            login_info = os.getenv('LOGIN_INFO')
-        self.result_id = result_id
-        self.login_info = login_info
         self._response = None  # type: Optional[Union[dict, str]]
         self._response_status = None  # type: Optional[str]
         self.invocation_response = None
@@ -131,8 +123,6 @@ class Lambdable:
             request_s3_bucket=REQUEST_S3_BUCKET,
             request_s3_key=request_key,
             response_to_s3=self.response_to_s3,
-            result_id=self.result_id,
-            login_info=self.login_info
         )
         self.invocation_response = response
         self.response_id = response_id

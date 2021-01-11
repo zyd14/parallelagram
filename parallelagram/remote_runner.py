@@ -145,8 +145,6 @@ class LambdaAsyncResponse:
              request_s3_bucket: str = None,
              request_s3_key: str = None,
              response_to_s3: bool = False,
-             result_id: int = None,
-             login_info: dict = None
              ):
         """
         Create the message object and pass it to the actual sender.
@@ -161,8 +159,6 @@ class LambdaAsyncResponse:
                 'request_s3_bucket': request_s3_bucket,
                 'request_s3_key': request_s3_key,
                 'response_to_s3': response_to_s3,
-                'result_id': result_id,
-                'login_info': login_info
             }
         self._send(message)
         return self
@@ -196,8 +192,6 @@ def run(func=None,
         request_s3_bucket: str = '',
         request_s3_key: str = '',
         response_to_s3: bool = False,
-        result_id: int = None,
-        login_info: dict = None,
         **task_kwargs) -> LambdaAsyncResponse:
     """ Run a function remotely on a separate Lambda instance by specifying either the actual function object (if it
         has the same module path in this calling code base as in the Lambda package being called) or a modular path to
@@ -226,9 +220,7 @@ def run(func=None,
                                                    get_request_from_s3=get_request_from_s3,
                                                    request_s3_bucket=request_s3_bucket,
                                                    request_s3_key=request_s3_key,
-                                                   response_to_s3=response_to_s3,
-                                                   result_id=result_id,
-                                                   login_info=login_info)
+                                                   response_to_s3=response_to_s3)
 
 
 ##
