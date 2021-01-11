@@ -1,6 +1,41 @@
 # Parallelagram
 A tool for distributing processes across AWS Lambda functions with built-in result retrieval for embarrassingly parallel workloads.  
 
+## Usage  
+```python
+# Example lambda function
+# filename: example_handler.py
+# Lambda function name: example_lambda
+from parallelagram.remote_handler import remote_handler
+
+
+@remote_handler
+def handler(event, context):
+    pass
+    
+def execute(max_time: int):
+    sleep_time = randint(1, max_time)
+    print(f'sleeping for {sleep_time} seconds')
+    sleep(sleep_time)
+    return {'message': f'slept for {sleep_time} seconds'}
+
+```
+
+```python
+# Calling code to asynchronously invoke the lambda defined above and retrieve its results
+
+from parallelagram.launchables import Lambdable, ResponseCollector
+def main():
+    lambda_list = [Lambdable(func_path='example_handler.execute',
+                             remote_aws_lambda_func_name='example_lambda',
+                             args=[10]) for x in range(50)]
+    collector = ResponseCollector(lambdables=lambda_list, fail_on_timeout=True)
+    collector.run_tasks()
+    collector.gather_responses()
+    for executed in collector.lambdables:
+        print(executed.get_response())
+```
+
 ## Background  
 While working on projects to build compute infrastructure for biological analyses in AWS I noticed an issue that was setting 
 a lower bound on how quickly an analysis would complete - the time it takes to simply provision the resources requested 
@@ -27,7 +62,7 @@ in order to gain access to hundreds or thousands of CPUs in a few seconds. Pleas
 prior to using this library though; using this library can incur account charges by AWS and can also interfere with other 
 services in your account by using up account-level quotas.  
 
-## Usage  
+
 
 ## Caveats and pitfalls  
 With great power comes great responsibility. When using this library it is important to be aware of some side-effects that 
