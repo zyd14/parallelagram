@@ -3,9 +3,12 @@ A tool for distributing processes across AWS Lambda functions with built-in resu
 
 ## Usage  
 ```python
-# Example lambda function
+# Example lambda function (should be deployed to AWS)
 # filename: example_handler.py
 # Lambda function name: example_lambda
+from time import sleep
+from random import randint
+
 from parallelagram.remote_handler import remote_handler
 
 
@@ -25,6 +28,8 @@ def execute(max_time: int):
 # Calling code to asynchronously invoke the lambda defined above and retrieve its results
 
 from parallelagram.launchables import Lambdable, ResponseCollector
+
+
 def main():
     lambda_list = [Lambdable(func_path='example_handler.execute',
                              remote_aws_lambda_func_name='example_lambda',

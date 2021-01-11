@@ -91,18 +91,6 @@ def remote_handler(func):
 
             If a message key is not present in the event then the decorated function handler will be invoked with the raw
             event and context arguments as a handler usually would be.
-
-            Because zappa dynamically generates its handler function on deployment, it is currently not possible to use this
-            wrapper on zappa-deployed functions.  Users who deploy their lambdas via zappa should use the @task (original
-            zappa wrapper) or @remote_runner function wrappers instead, which should both still play nice with the manager
-            functionalities provided in remote_manager.
-
-            Example for a non-Zappa deployed function:
-
-    get_request_from_s3: bool = False,
-                     request_s3_bucket: str = '',
-                     request_s3_key: str = '',
-                     response_to_s3: str = ''
     """
 
     @wraps(func)
